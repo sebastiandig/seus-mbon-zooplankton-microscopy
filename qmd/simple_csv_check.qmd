@@ -1,0 +1,57 @@
+---
+title: "CSV checker"
+---
+
+```{R setup}
+#| code-summary: setup
+library(ggplot2)
+library(here)
+library(skimr)
+```
+
+```{R load file}
+#| code-summary: load file
+data <- read.csv(here("data/zoo_data_pre_obis_merg.csv"))
+```
+
+```{R print info}
+#| code-summary: Print basic diagnostic information
+# print(head(data))     # View first few rows
+# print(str(data))      # Structure of the data frame
+# print(summary(data))  # Statistical summary of the data
+#  Use skimr to provide a detailed summary
+skimmed_data <- skimr::skim(data)
+print(skimmed_data)
+
+skimr::skim_tee(data)
+```
+# column-specific checks:
+```{R column checks}
+#| code-summary: diagnose char column that should be numeric
+colname <- "lat_in"
+# Convert row to numeric. Non-convertible entries will become NA
+numeric_colname <- paste(colname, "_as_numeric", sep = "")
+data[[numeric_colname]] <- as.numeric(as.character(data[[colname]]))
+
+# Check for NAs which indicate problematic entries
+num_non_numeric <- sum(is.na(data[[numeric_colname]]))
+
+# Print the number of non-numeric rows
+print(paste("Number of non-numeric rows in 'NumericColumn':", num_non_numeric))
+
+# Optional: To see which rows are non-numeric
+problematic_rows <- data[is.na(data[[numeric_colname]]), ]
+print(problematic_rows)
+```
+Looking at a histogram of `individualCount` we can see that rows generally have low numbers of individuals:
+
+```{R histogram}
+#| code-summary: Histogram of a numeric column
+hist(data$individualCount)
+```
+A scatter plot between the `ind_m3` and `individualCount` shows that rows with more individuals also have a higher density of individuals per volume.
+
+```{R scatter plot}
+#| code-summary: Scatter plot between two variables
+plot(data$individualCount, data$ind_m3, main = "Scatter plot", xlab = "ind_m3", ylab = "individualCount")
+```
