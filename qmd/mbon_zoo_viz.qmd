@@ -1,0 +1,126 @@
+---
+title: "MBON Zooplankton Quick Visual"
+author: 
+  - Sebastian Di Geronimo
+  - Tylar Murray
+date: 2025-02-14
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+This is a reproduced examples from *google colab* by Tylar
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+  # additional
+  
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+## 2.2 Load Dataset
+
+```{R load file}
+#| code-summary: load file
+dat <- 
+  here("data", "zoo_data_pre_obis_merg.csv") %>%
+  read_csv(show_col_types = FALSE) %T>% 
+  print()
+
+skimr::skim_tee(dat)
+```
+
+
+```{r}
+print(paste("stations:", paste(unique(dat$station), collapse = ", ")))
+print(paste("stations:", paste(unique(dat$site), collapse = ", ")))
+print(paste("mesh sizes available: ", paste(unique(dat$mesh), collapse = ", ")))
+print(paste("life stages:", paste(unique(dat$lifeStage), collapse = ", ")))
+
+```
+
+```{r}
+# === constants
+conts <- list(
+  taxa_lvl = "class",
+  mesh     = 200,
+  site     = "MR"
+)
+
+```
+
+```{r}
+# === filter
+dat_filtered <- dat
+# print(f'n total samples : {len(dat_filtered)}')
+
+dat_filtered <- dat_filtered[dat_filtered['site'] == conts$site, ]
+# print(f'n samples in {STATION_NAME}: {len(dat_filtered)}')
+
+dat_filtered <- dat_filtered[dat_filtered['mesh'] == conts$mesh, ]
+# print(f'n samples w/ mesh=={MESH_SIZE}: {len(dat_filtered)}')
+
+dat_filtered = dat_filtered[is.na(dat_filtered['lifeStage']), ]  # select only adults (empty)
+# print(f'n samples adults only: {len(dat_filtered)}')
+
+# === Group data then count (or average)
+# avg # individuals / m^3
+grouped_data <- dat_filtered  %>%
+  mutate(year = year(date_time), .after = date_time) %>%
+  rename(taxa_level = conts$taxa_lvl) %>%
+  mutate(taxa_level = if_else(is.na(taxa_level), phylum, taxa_level)) %>%
+  summarise(
+    .by = c(site, year, taxa_level),
+    ind_m3 = mean(ind_m3)
+  ) %T>% 
+  print()
+  
+ 
+
+```
+
+```{r plot-data}
+# === Iterate over unique stations and create stacked bar charts
+grouped_data %>%
+  mutate(
+    phylum = fct_reorder(taxa_level, ind_m3, .fun = max)
+  ) %>%
+  ggplot(aes(x = year, y = ind_m3, fill = phylum)) +
+  geom_col(
+    
+  ) +
+  labs(
+    y = NULL,
+    x = "Year",
+    title = glue("{conts$taxa_lvl} for Year for Station {conts$site} (mesh size {conts$mesh})")
+  ) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_viridis_d() +
+  theme_classic() +
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.9, 0.7),
+    legend.box.background = element_rect(color = "grey")
+  )
+```
+
