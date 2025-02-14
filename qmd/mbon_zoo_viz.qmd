@@ -27,7 +27,7 @@ librarian::shelf(
   forcats, lubridate, glue, fs, magrittr, here,
   
   # additional
-  prismatic
+  prismatic, skimr
 )
 
 conflicts_prefer(
@@ -36,7 +36,7 @@ conflicts_prefer(
   )
 ```
 
-## 2.2 Load Dataset
+# 3.0 Load Dataset
 
 ```{R load file}
 #| code-summary: load file
@@ -47,6 +47,7 @@ dat <-
 
 skimr::skim_tee(dat)
 
+# select columns
 dat <- 
   dat %>%
   select(
@@ -59,58 +60,98 @@ dat <-
     volume_filt_cubic_m,
     taxa, scientificname, lifeStage, ind_m3, number_ind_sample,
     kingdom:genus
-  ) %T>% 
+  ) %>%
+  mutate(
+    .after     = date,
+    year       = year(date_time), 
+    date_month = ym(format(date, "%Y-%m"))
+    ) %T>% 
   print()
 ```
+## 3.1 Print Information
 
-
-```{r}
+Information for station and site names, mesh sizes and life stages
+```{r print-info}
 print(paste("stations:", paste(unique(dat$station), collapse = ", ")))
 print(paste("stations:", paste(unique(dat$site), collapse = ", ")))
 print(paste("mesh sizes available: ", paste(unique(dat$mesh), collapse = ", ")))
 print(paste("life stages:", paste(unique(dat$lifeStage), collapse = ", ")))
 
+dat_nest <- dat %>%
+  nest(data = c(taxa:last_col()))
+count(dat_nest, station, site)
+count(dat_nest, station, site, mesh)
+count(dat_nest, station, site, mesh, date_month)
+ 
 ```
+# 4.0 Set Constants
 
-```{r}
-# === constants
+Set the lowest taxonomic level for plotting
+Select the mesh size
+Select the station
+
+Options:
+  - taxa_lvl:
+    - kingdom
+    - phylum 
+    - class 
+    - order 
+    - family
+    - genus
+    - scientificname
+    
+  - mesh:
+    - 200
+    - 500 
+    - 64 (<4 samples)
+  
+  - site:
+    - MR
+    - LK
+    - WS
+    - 9B (2 samples)
+    - 57 (2 samples)
+
+```{r constants}
 const <- list(
   taxa_lvl = "phylum", # lowest taxa level
-  mesh     = 200,
-  site     = "WS"
+  mesh     = 200,      # mesh size
+  site     = "WS"      # site
 )
 
+# order of taxonomic classification
 taxa_tree <- 
   c("kingdom", "phylum", "class", "order", "family", "genus", "scientificname") %>%
   rev()
 
-
+# set lowest level
 const$taxa_lvl <- taxa_tree[which(taxa_tree == const$taxa_lvl):length(taxa_tree)]
+
+const
 ```
 
-```{r}
 
-# === filter
+# 5.0 Filter Data
+
+Filter data based on the constants from the previous chunk
+This will also only select the "adult" stages (i.e. NA in lifeStage)
+
+```{r filter-data}
 dat_filtered <-
   dat %>%
   filter(
     str_detect(site, const$site) # site
-    & mesh == const$mesh # mesh size
-    & is.na(lifeStage) # assumed na is adult
-  ) %>%
+    & mesh == const$mesh         # mesh size
+    & is.na(lifeStage)           # assumed na is adult
+  )  %>% 
   mutate(
-    year = year(date_time), 
-    date_month = ym(format(date, "%Y-%m")),
-    .after = date) %>% # column for year
-  mutate(
-    # .keep = "used",
-    scientificname, kingdom, phylum, class, order, family, genus,
+    # select the lowest taxa name available
     taxa_level = pmap_chr(
-      # across(c(kingdom:genus)),
       across(c(const$taxa_lvl)),
       \(...) {
-        dat <- c(...)
+        dat <- c(...) # combine all names into a vector
         taxa_name <- NA
+        # loop through all names to select the lowest name
         for (i in seq(length(dat))) {
           if (is.na(taxa_name)) {
             taxa_name <- dat[i]
@@ -123,33 +164,23 @@ dat_filtered <-
     ),
   ) %T>%
   print() 
-
-# dat_filtered <- dat_filtered[dat_filtered['site'] == const$site, ]
-# dat_filtered <- dat_filtered[dat_filtered['mesh'] == const$mesh, ]
-# dat_filtered <- dat_filtered[is.na(dat_filtered['lifeStage']), ]  # select only adults (empty)
-
-
-
-# === Group data then count (or average)
-# avg # individuals / m^3
-grouped_data <- 
-  dat_filtered  %>%
-  # rename(taxa_level = const$taxa_lvl) %>%
-  # mutate(taxa_level = if_else(is.na(taxa_level), phylum, taxa_level)) %>%
-  summarise(
-    .by = c(site, year, date_month, taxa_level),
-    # ind_m3 = mean(ind_m3)
-    ind_m3 = sum(ind_m3)
-  ) %T>% 
-  print()
 ```
 
-```{r plot-data}
+
+# 6.0 Plot Data
+
+
+## 6.1 Plot the Ind/m^3 based on Year
+
+Either sum or mean
+
+```{r plot-barchart-yearly}
 # === Iterate over unique stations and create stacked bar charts
 dat_filtered %>%
   summarise(
     .by = c(taxa_level, site, year),
-    ind_m3 = mean(ind_m3),
+    # ind_m3 = mean(ind_m3),
+    ind_m3 = sum(ind_m3),
     
   ) %>%
   mutate(
@@ -164,6 +195,7 @@ dat_filtered %>%
   labs(
     y = NULL,
     x = "Year",
+    fill  = "Taxa Name",
     title = glue("`{const$taxa_lvl[1]}` for Year for Station {const$site} (mesh size {const$mesh})")
   ) +
   scale_y_continuous(expand = c(0, 0)) +
@@ -171,19 +203,68 @@ dat_filtered %>%
   guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
   theme_classic() +
   theme(
-    # legend.position = "inside",
-    # legend.position.inside = c(0.9, 0.7),
     legend.box.background = element_rect(color = "grey")
   )
 ```
 
+## 6.2 Plot the Ind/m^3 based on Month and Year
 
-```{r plot-data}
+Either sum or mean
+```{r plot-barchart-months}
 # === Iterate over unique stations and create stacked bar charts
-grouped_data %>%
+dat_filtered %>%
+    summarise(
+    .by = c(site, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
+  ) %>%
   mutate(
-    .by = c(site, date_month),
-    total = sum(ind_m3),
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total
+  ) %>%
+  mutate(
+    taxa_level = fct_reorder(taxa_level, ind_m3, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  ) %>%
+  ggplot(
+    aes(x = date_month2, y = ind_m3, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  labs(
+    y = NULL,
+    x = "Year",
+    fill  = "Taxa Name",
+    title = glue("`{const$taxa_lvl[1]}` for Year for Station {const$site} (mesh size {const$mesh})")
+  ) +
+  scale_y_continuous(
+    expand = c(0, 0)
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
+  theme_classic() +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+## 6.2 Plot the Percent (%) Ind/m^3 based on Month and Year 
+
+Either sum or mean
+
+```{r plot-barchart-percent}
+dat_filtered %>%
+    summarise(
+    .by = c(site, year, date_month, taxa_level),
+    ind_m3 = mean(ind_m3)
+    # ind_m3 = sum(ind_m3)
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
     percent = ind_m3 / total
   ) %>%
   mutate(
@@ -199,6 +280,7 @@ grouped_data %>%
   labs(
     y = NULL,
     x = "Year",
+    fill  = "Taxa Name",
     title = glue("`{const$taxa_lvl[1]}` for Year for Station {const$site} (mesh size {const$mesh})")
   ) +
   scale_y_continuous(
@@ -209,8 +291,6 @@ grouped_data %>%
   guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
   theme_classic() +
   theme(
-    # legend.position = "inside",
-    # legend.position.inside = c(0.9, 0.7),
     legend.box.background = element_rect(color = "grey"),
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
