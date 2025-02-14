@@ -27,15 +27,13 @@ librarian::shelf(
   forcats, lubridate, glue, fs, magrittr, here,
   
   # additional
-  
+  prismatic
 )
 
 conflicts_prefer(
   dplyr::filter(), 
   dplyr::select()
   )
-  
-
 ```
 
 ## 2.2 Load Dataset
@@ -48,6 +46,21 @@ dat <-
   print()
 
 skimr::skim_tee(dat)
+
+dat <- 
+  dat %>%
+  select(
+    cruise_id,
+    station, site, 
+    mesh,
+    date_time, date, time_gmt,
+    lat_in, lon_in,
+    maximumDepthInMeters,
+    volume_filt_cubic_m,
+    taxa, scientificname, lifeStage, ind_m3, number_ind_sample,
+    kingdom:genus
+  ) %T>% 
+  print()
 ```
 
 
@@ -61,66 +74,145 @@ print(paste("life stages:", paste(unique(dat$lifeStage), collapse = ", ")))
 
 ```{r}
 # === constants
-conts <- list(
-  taxa_lvl = "class",
+const <- list(
+  taxa_lvl = "phylum", # lowest taxa level
   mesh     = 200,
-  site     = "MR"
+  site     = "WS"
 )
 
+taxa_tree <- 
+  c("kingdom", "phylum", "class", "order", "family", "genus", "scientificname") %>%
+  rev()
+
+
+const$taxa_lvl <- taxa_tree[which(taxa_tree == const$taxa_lvl):length(taxa_tree)]
 ```
 
 ```{r}
+
 # === filter
-dat_filtered <- dat
-# print(f'n total samples : {len(dat_filtered)}')
+dat_filtered <-
+  dat %>%
+  filter(
+    str_detect(site, const$site) # site
+    & mesh == const$mesh # mesh size
+    & is.na(lifeStage) # assumed na is adult
+  ) %>%
+  mutate(
+    year = year(date_time), 
+    date_month = ym(format(date, "%Y-%m")),
+    .after = date) %>% # column for year
+  mutate(
+    # .keep = "used",
+    scientificname, kingdom, phylum, class, order, family, genus,
+    taxa_level = pmap_chr(
+      # across(c(kingdom:genus)),
+      across(c(const$taxa_lvl)),
+      \(...) {
+        dat <- c(...)
+        taxa_name <- NA
+        for (i in seq(length(dat))) {
+          if (is.na(taxa_name)) {
+            taxa_name <- dat[i]
+          } else {
+            taxa_name
+          }
+        }
+        return(taxa_name)
+      }
+    ),
+  ) %T>%
+  print() 
 
-dat_filtered <- dat_filtered[dat_filtered['site'] == conts$site, ]
-# print(f'n samples in {STATION_NAME}: {len(dat_filtered)}')
+# dat_filtered <- dat_filtered[dat_filtered['site'] == const$site, ]
+# dat_filtered <- dat_filtered[dat_filtered['mesh'] == const$mesh, ]
+# dat_filtered <- dat_filtered[is.na(dat_filtered['lifeStage']), ]  # select only adults (empty)
 
-dat_filtered <- dat_filtered[dat_filtered['mesh'] == conts$mesh, ]
-# print(f'n samples w/ mesh=={MESH_SIZE}: {len(dat_filtered)}')
 
-dat_filtered = dat_filtered[is.na(dat_filtered['lifeStage']), ]  # select only adults (empty)
-# print(f'n samples adults only: {len(dat_filtered)}')
 
 # === Group data then count (or average)
 # avg # individuals / m^3
-grouped_data <- dat_filtered  %>%
-  mutate(year = year(date_time), .after = date_time) %>%
-  rename(taxa_level = conts$taxa_lvl) %>%
-  mutate(taxa_level = if_else(is.na(taxa_level), phylum, taxa_level)) %>%
+grouped_data <- 
+  dat_filtered  %>%
+  # rename(taxa_level = const$taxa_lvl) %>%
+  # mutate(taxa_level = if_else(is.na(taxa_level), phylum, taxa_level)) %>%
   summarise(
-    .by = c(site, year, taxa_level),
-    ind_m3 = mean(ind_m3)
+    .by = c(site, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
   ) %T>% 
   print()
-  
- 
-
 ```
+
+```{r plot-data}
+# === Iterate over unique stations and create stacked bar charts
+dat_filtered %>%
+  summarise(
+    .by = c(taxa_level, site, year),
+    ind_m3 = mean(ind_m3),
+    
+  ) %>%
+  mutate(
+    taxa_level = fct_reorder(taxa_level, ind_m3, .fun = max)
+  ) %>%
+  ggplot(
+    aes(x = year, y = ind_m3, fill = taxa_level,
+    color = after_scale(prismatic::clr_darken(fill, 0.3))
+        ),
+    ) +
+  geom_col() +
+  labs(
+    y = NULL,
+    x = "Year",
+    title = glue("`{const$taxa_lvl[1]}` for Year for Station {const$site} (mesh size {const$mesh})")
+  ) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
+  theme_classic() +
+  theme(
+    # legend.position = "inside",
+    # legend.position.inside = c(0.9, 0.7),
+    legend.box.background = element_rect(color = "grey")
+  )
+```
+
 
 ```{r plot-data}
 # === Iterate over unique stations and create stacked bar charts
 grouped_data %>%
   mutate(
-    phylum = fct_reorder(taxa_level, ind_m3, .fun = max)
+    .by = c(site, date_month),
+    total = sum(ind_m3),
+    percent = ind_m3 / total
   ) %>%
-  ggplot(aes(x = year, y = ind_m3, fill = phylum)) +
-  geom_col(
-    
-  ) +
+  mutate(
+    taxa_level = fct_reorder(taxa_level, ind_m3, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  ) %>%
+  ggplot(
+    aes(x = date_month2, y = percent, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
   labs(
     y = NULL,
     x = "Year",
-    title = glue("{conts$taxa_lvl} for Year for Station {conts$site} (mesh size {conts$mesh})")
+    title = glue("`{const$taxa_lvl[1]}` for Year for Station {const$site} (mesh size {const$mesh})")
   ) +
-  scale_y_continuous(expand = c(0, 0)) +
-  scale_fill_viridis_d() +
+  scale_y_continuous(
+    expand = c(0, 0),
+    labels = scales::label_percent()
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
   theme_classic() +
   theme(
-    legend.position = "inside",
-    legend.position.inside = c(0.9, 0.7),
-    legend.box.background = element_rect(color = "grey")
+    # legend.position = "inside",
+    # legend.position.inside = c(0.9, 0.7),
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
   )
 ```
 
