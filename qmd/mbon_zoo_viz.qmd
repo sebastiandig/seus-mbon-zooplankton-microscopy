@@ -114,7 +114,7 @@ Options:
 
 ```{r constants}
 const <- list(
-  taxa_lvl = "phylum", # lowest taxa level
+  taxa_lvl = "class", # lowest taxa level
   mesh     = 200,      # mesh size
   site     = "WS"      # site
 )
@@ -259,8 +259,8 @@ Either sum or mean
 dat_filtered %>%
     summarise(
     .by = c(site, year, date_month, taxa_level),
-    ind_m3 = mean(ind_m3)
-    # ind_m3 = sum(ind_m3)
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
   ) %>%
   mutate(
     .by     = c(site, date_month),
@@ -279,7 +279,7 @@ dat_filtered %>%
   geom_col() +
   labs(
     y = NULL,
-    x = "Year",
+    x = "Cruise",
     fill  = "Taxa Name",
     title = glue("`{const$taxa_lvl[1]}` for Year for Station {const$site} (mesh size {const$mesh})")
   ) +
@@ -294,5 +294,6 @@ dat_filtered %>%
     legend.box.background = element_rect(color = "grey"),
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
+
 ```
 
