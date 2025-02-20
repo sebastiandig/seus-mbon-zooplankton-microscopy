@@ -50,6 +50,7 @@ skimr::skim_tee(dat)
 # select columns
 dat <- 
   dat %>%
+  filter(str_detect(site, "MR|LK|WS")) %>%
   select(
     cruise_id,
     station, site, 
@@ -114,7 +115,7 @@ Options:
 
 ```{r constants}
 const <- list(
-  taxa_lvl = "phylum", # lowest taxa level
+  taxa_lvl = "class", # lowest taxa level
   mesh     = 200,      # mesh size
   site     = "WS"      # site
 )
@@ -211,7 +212,6 @@ dat_filtered %>%
 
 Either sum or mean
 ```{r plot-barchart-months}
-# === Iterate over unique stations and create stacked bar charts
 dat_filtered %>%
     summarise(
     .by = c(site, year, date_month, taxa_level),
@@ -224,7 +224,7 @@ dat_filtered %>%
     percent = ind_m3 / total
   ) %>%
   mutate(
-    taxa_level = fct_reorder(taxa_level, ind_m3, .fun = max),
+    taxa_level = fct_reorder(taxa_level, percent, .fun = max),
     date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
   ) %>%
   ggplot(
@@ -259,8 +259,8 @@ Either sum or mean
 dat_filtered %>%
     summarise(
     .by = c(site, year, date_month, taxa_level),
-    ind_m3 = mean(ind_m3)
-    # ind_m3 = sum(ind_m3)
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
   ) %>%
   mutate(
     .by     = c(site, date_month),
@@ -268,20 +268,22 @@ dat_filtered %>%
     percent = ind_m3 / total
   ) %>%
   mutate(
-    taxa_level = fct_reorder(taxa_level, ind_m3, .fun = max),
+    taxa_level = fct_reorder(taxa_level, percent, .fun = max),
     date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
   ) %>%
   ggplot(
-    aes(x = date_month2, y = percent, fill = taxa_level, 
+    aes(x = date_month2, 
+        y = percent, 
+        fill  = taxa_level, 
         color = after_scale(prismatic::clr_darken(fill, 0.3))
         )
          ) +
   geom_col() +
   labs(
     y = NULL,
-    x = "Year",
+    x = NULL,
     fill  = "Taxa Name",
-    title = glue("`{const$taxa_lvl[1]}` for Year for Station {const$site} (mesh size {const$mesh})")
+    title = glue("`{const$taxa_lvl[1]}` for Cruise for Station {const$site} (mesh size {const$mesh})")
   ) +
   scale_y_continuous(
     expand = c(0, 0),
@@ -294,5 +296,392 @@ dat_filtered %>%
     legend.box.background = element_rect(color = "grey"),
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
+
+```
+
+
+
+# 7.0 Plot All Stations 
+
+## 7.1 200 μm
+
+```{r mesh-200}
+dat_lowest_200 <-
+  dat %>%
+  filter(
+    mesh == 200           # mesh size
+    & is.na(lifeStage)      # assumed na is adult
+  )  %>% 
+  mutate(
+    site = fct(site, c("MR", "LK", "WS")),
+    station = fct(station, c("Molasses Reef", "Looe Key (deep)", "Western Sambo")), 
+    # select the lowest taxa name available
+    taxa_level = pmap_chr(
+      across(c(const$taxa_lvl)),
+      \(...) {
+        dat <- c(...) # combine all names into a vector
+        taxa_name <- NA
+        # loop through all names to select the lowest name
+        for (i in seq(length(dat))) {
+          if (is.na(taxa_name)) {
+            taxa_name <- dat[i]
+          } else {
+            taxa_name
+          }
+        }
+        return(taxa_name)
+      }
+    ),
+  ) %T>%
+  print() 
+```
+
+
+```{r plot-stations-200}
+dat_lowest_200 %>%
+    summarise(
+    .by = c(station, site, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total
+  ) %>%
+  mutate(
+    taxa_level = fct_reorder(taxa_level, percent, .fun = mean),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  ) %>%
+  ggplot(
+    aes(x = date_month2, y = percent, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_point(aes(y = total / 10000), color = "red", fill = "white", shape = 21) +
+  geom_hline(yintercept = -0.005, linewidth = rel(1)) +
+  labs(
+    y = NULL,
+    x = NULL,
+    fill = str_to_sentence(const$taxa_lvl),
+    title = NULL
+  ) +
+  scale_y_continuous(
+    expand = c(0, 0),
+    labels = scales::label_percent(),
+     sec.axis = sec_axis(transform = ~ .x * 10000, 
+                         name = expression(paste("# Individual m")^-3)
+                         )
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  theme_classic() +
+  facet_wrap(~station, ncol = 1, strip.position = "top") +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.line.x.bottom = element_blank(),
+    axis.text.y.right     = element_text(color = "red"),
+    axis.title.y.right    = element_text(color = "red"),
+    axis.ticks.y.right    = element_line(color = "red")
+  ) 
+```
+```{r total-biomass-200}
+dat_lowest_200 %>%
+    summarise(
+    .by = c(station, site, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total
+  ) %>%
+  mutate(
+    taxa_level = fct_reorder(taxa_level, percent, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  ) %>%
+  ggplot(
+    aes(x = date_month2, y = ind_m3, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_hline(yintercept = -0.005, linewidth = rel(1)) +
+  labs(
+    y = NULL,
+    x = "Year",
+    fill  = const$taxa_lvl,
+    title = NULL
+  ) +
+  scale_y_continuous(
+    expand = c(0, 0)
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  theme_classic() +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.line.x.bottom = element_blank(),
+  ) +
+  facet_wrap(~station, ncol = 1)
+```
+
+
+## 7.2 500 μm
+
+```{r mesh-500}
+dat_lowest_500 <-
+  dat %>%
+  filter(
+    !str_detect(site, "9B") # site
+    # str_detect(site, const$site) # site
+    & mesh == 500        # mesh size
+    & is.na(lifeStage)           # assumed na is adult
+  )  %>% 
+  mutate(
+    site = fct(site, c("MR", "LK", "WS")),
+    station = fct(station, c("Molasses Reef", "Looe Key (deep)", "Western Sambo")), 
+    # select the lowest taxa name available
+    taxa_level = pmap_chr(
+      across(c(const$taxa_lvl)),
+      \(...) {
+        dat <- c(...) # combine all names into a vector
+        taxa_name <- NA
+        # loop through all names to select the lowest name
+        for (i in seq(length(dat))) {
+          if (is.na(taxa_name)) {
+            taxa_name <- dat[i]
+          } else {
+            taxa_name
+          }
+        }
+        return(taxa_name)
+      }
+    ),
+  ) %T>%
+  print() 
+```
+
+
+
+
+```{r plot-stations-500}
+dat_lowest_500 %>%
+  summarise(
+    .by = c(station, site, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total
+  ) %>%
+  mutate(
+    taxa_level  = fct_reorder(taxa_level, percent, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  ) %>%
+  ggplot(
+    aes(
+      x = date_month2, y = percent, fill = taxa_level,
+      color = after_scale(prismatic::clr_darken(fill, 0.3))
+    )
+  ) +
+  geom_col() +
+  geom_point(aes(y = (total / 1000)), color = "red", fill = "white", shape = 21) +
+  geom_hline(yintercept = -0.005, linewidth = rel(1)) +
+  labs(
+    y = NULL,
+    x = NULL,
+    fill  = str_to_sentence(const$taxa_lvl),
+    title = NULL
+  ) +
+  scale_y_continuous(
+    expand   = c(0, 0),
+    labels   = scales::label_percent(),
+    sec.axis = sec_axis(transform = ~ .x * 1000, 
+                        name = expression(paste("# Individual m")^-3)
+                        )
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  theme_classic() +
+  facet_wrap(~station, ncol = 1) +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x           = element_text(angle = 45, hjust = 1),
+    axis.line.x.bottom    = element_blank(),
+    axis.line.x.top       = element_line(color = "black", linewidth = rel(1)),
+    axis.text.y.right     = element_text(color = "red"),
+    axis.title.y.right    = element_text(color = "red"),
+    axis.ticks.y.right    = element_line(color = "red")
+  )
+```
+
+```{r total-biomass-500}
+dat_lowest_500 %>%
+    summarise(
+    .by = c(station, site, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total
+  ) %>%
+  mutate(
+    taxa_level  = fct_reorder(taxa_level, percent, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  ) %>%
+  ggplot(
+    aes(x = date_month2, 
+        y = ind_m3, 
+        fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  labs(
+    y = NULL,
+    x = "Year",
+    fill  = const$taxa_lvl,
+    title = NULL
+  ) +
+  scale_y_continuous(
+    expand = c(0, 0)
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  theme_classic() +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  facet_wrap(~station, ncol = 1)
+```
+
+## 7.3 Both
+
+```{r mesh-both}
+dat_lowest_both <-
+  dat %>%
+  filter(
+    !str_detect(site, "9B|57") # site
+    & (mesh == 200 | mesh == 500)           # mesh size
+    & is.na(lifeStage)      # assumed na is adult
+  )  %>% 
+  mutate(
+    site = fct(site, c("MR", "LK", "WS")),
+    station = fct(station, c("Molasses Reef", "Looe Key (deep)", "Western Sambo")), 
+    # select the lowest taxa name available
+    taxa_level = pmap_chr(
+      across(c(const$taxa_lvl)),
+      \(...) {
+        dat <- c(...) # combine all names into a vector
+        taxa_name <- NA
+        # loop through all names to select the lowest name
+        for (i in seq(length(dat))) {
+          if (is.na(taxa_name)) {
+            taxa_name <- dat[i]
+          } else {
+            taxa_name
+          }
+        }
+        return(taxa_name)
+      }
+    ),
+  ) %T>%
+  print() 
+```
+
+
+```{r plot-stations-both}
+dat2 <- 
+  dat_lowest_both %>%
+  summarise(
+    .by = c(station, site, mesh, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
+  ) %>%
+  mutate(
+    .by     = c(site, mesh, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total
+  ) %>%
+  mutate(
+    taxa_level = fct_reorder(taxa_level, percent, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  ) 
+
+dat2 %>%
+  filter(mesh == 200) %>%
+  ggplot(
+    aes(x = date_month2, y = percent, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_point(aes(y = (total / 10000)), color = "black", fill = "white", shape = 21) +
+  geom_hline(yintercept = -0.005, linewidth = rel(1)) +
+  labs(
+    y = NULL,
+    x = NULL,
+    fill = str_to_sentence(const$taxa_lvl),
+    title = NULL
+  ) +
+  scale_y_continuous(
+    expand = c(0, 0),
+    labels = scales::label_percent(),
+    sec.axis = sec_axis(transform = ~ .x * 10000)
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, reverse = TRUE)) +
+  theme_classic() +
+  facet_grid(station~mesh, scales = "free") +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x           = element_text(angle = 45, hjust = 1),
+    panel.spacing.y       = unit(0.75, "lines"),
+    panel.spacing.x       = unit(0.75, "lines"),
+    axis.line.x.bottom    = element_blank(),
+  ) 
+
+dat2 %>%
+  filter(mesh == 500) %>%
+  ggplot(
+    aes(x = date_month2, y = percent, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_point(aes(y = (total / 1000)), color = "black", fill = "white", shape = 21) +
+  geom_hline(yintercept = -0.005, linewidth = rel(1)) +
+  labs(
+    y = NULL,
+    x = NULL,
+    fill = str_to_sentence(const$taxa_lvl),
+    title = NULL
+  ) +
+  scale_y_continuous(
+    expand = c(0, 0),
+    labels = scales::label_percent(),
+    sec.axis = sec_axis(transform = ~ .x * 1000 )
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, reverse = TRUE)) +
+  theme_classic() +
+  facet_grid(station~mesh, scales = "free") +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x           = element_text(angle = 45, hjust = 1),
+    panel.spacing.y       = unit(0.75, "lines"),
+    panel.spacing.x       = unit(0.75, "lines"),
+    axis.line.x.bottom    = element_blank(),
+  ) 
 ```
 
