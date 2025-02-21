@@ -140,7 +140,7 @@ Options:
 ```{r constants}
 #| echo: false
 const <- list(
-  taxa_lvl = "order", # lowest taxa level
+  taxa_lvl = "class", # lowest taxa level
   mesh     = 200,      # mesh size
   site     = "WS"      # site
 )
@@ -578,7 +578,7 @@ dat_lowest_both <-
   dat %>%
   filter(
     !str_detect(site, "9B|57") # site
-    & (mesh == c(200, 500)) # mesh size
+    & (mesh == 500 | mesh == 200) 
     & is.na(lifeStage)      # assumed na is adult
   )  %>% 
   mutate(
@@ -590,7 +590,7 @@ dat_lowest_both <-
       incld_lvl = FALSE,
       taxa_func
     ),
-  )  %>%
+  ) %>%
   unnest(taxa_level) %>%
   summarise(
     .by = c(station, site, mesh, year, date_month, taxa_level),
@@ -630,7 +630,9 @@ dat_lowest_both %>%
   scale_y_continuous(
     expand = c(0, 0),
     labels = scales::label_percent(),
-    sec.axis = sec_axis(transform = ~ .x * 10000)
+    sec.axis = sec_axis(transform = ~ .x * 10000,
+                        name = expression(paste("# Individual m")^-3)
+                        )
   ) +
   scale_fill_viridis_d(option = "A",
                        drop = FALSE) +
@@ -666,7 +668,9 @@ dat_lowest_both %>%
   scale_y_continuous(
     expand = c(0, 0),
     labels = scales::label_percent(),
-    sec.axis = sec_axis(transform = ~ .x * 1000)
+    sec.axis = sec_axis(transform = ~ .x * 1000,
+                        name = expression(paste("# Individual m")^-3)
+                        )
   ) +
   scale_fill_viridis_d(option = "A",
                        drop = FALSE) +
@@ -712,9 +716,9 @@ dat_cope <-
   dat %>%
   filter(
     str_detect(class, "Copepoda")
-    & !str_detect(site, "9B|57") # site
-    & (mesh == c(200, 500)) # mesh size
-    & is.na(lifeStage)      # assumed na is adult
+    & !str_detect(site, "9B|57")  # site
+    & (mesh == 500 | mesh == 200) # mesh size
+    & is.na(lifeStage)            # assumed na is adult
   )  %>% 
   mutate(
     site = fct(site, c("MR", "LK", "WS")),
