@@ -1,0 +1,182 @@
+---
+title: "Convert OBIS Zooplankton Data into Sample x Predictor format"
+author: "Sebastian Di Geronimo"
+date: 2025-05-27
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+  # additional
+  
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+
+# 3.0 Load Zooplankton Data
+
+
+```{r load-file}
+#| code-summary: load file
+dat <- 
+  here("data", "zoo_data_pre_obis_merg.csv") %>%
+  read_csv(show_col_types = FALSE) %T>% 
+  print()
+
+skimr::skim_tee(dat)
+
+# select columns
+dat <- 
+  dat %>%
+  filter(str_detect(site, "MR|LK|WS"), mesh != 64) %>%
+  select(
+    cruise_id,
+    station, site, 
+    mesh,
+    date_time, date, time_gmt,
+    lat_in, lon_in,
+    maximumDepthInMeters,
+    volume_filt_cubic_m,
+    taxa, scientificname, lifeStage, ind_m3, number_ind_sample,
+    kingdom:genus
+  ) %>%
+  mutate(
+    .after     = date,
+    year       = year(date_time), 
+    date_month = ym(format(date, "%Y-%m"))
+    ) %T>% 
+  print()
+```
+
+## 3.1 Select Minimum Columns and Remove `lifeStage`
+
+Min. Cols:
+- site
+- mesh
+- date
+- scientificname
+- ind_m3
+
+Remove `lifeStage` by summing with other life stage
+
+```{r select-col}
+dat_filt <- 
+  dat %>%
+  select(site, mesh, date, scientificname, ind_m3) %>%
+  
+  # remove life stage by summing with adult
+  summarise(
+    .by = c(site, mesh, date, scientificname),
+    ind_m3 = sum(ind_m3, na.rm = TRUE)
+  ) %T>% 
+  print()
+```
+
+
+## 3.2 Convert to Wide
+
+
+```{r convert-to-wide}
+dat_wide <- 
+  dat_filt %>%
+    
+  pivot_wider(
+    data         = .,
+    # id_cols      = -c(), 
+    names_from   = c(scientificname), 
+    values_from  = c(ind_m3), 
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    ) %T>% 
+  print()  %>%
+  mutate(
+    across(
+      is.numeric,
+      \(.x) if_else(is.na(.x), 0, .x)
+           )
+  ) 
+```
+
+# 4.0 Save File
+
+```{r save-file}
+if (file_exists(here("data", "zoo_wide.csv"))) {
+  cli::cli_alert_warning("File exists and is not being created!")
+} else {
+  cli::cli_alert_info("File does not exists and is being created!")
+  write_csv(
+    x = dat_wide,
+    file = here("data", "zoo_wide.csv"),
+    na = ""
+  )
+}
+```
+
+
+
+extract 5 most common taxa
+
+
+# 5.0 Load Environmental Data and Join with Zooplankton Data
+```{r}
+# surface data
+env_surf <- 
+  here("data", "env_join_zoo.csv") %>%
+  read_csv(show_col_types = FALSE) %T>% 
+  print()
+
+# avg surface and bottom data
+env_avg <- 
+  here("data", "avg_env_join_zoo.csv") %>%
+  read_csv(show_col_types = FALSE) %T>% 
+  print()
+```
+
+```{r}
+  left_join(
+    dat_wide,
+    env_surf,
+    by = c("site", "date")
+  ) %T>% 
+  print()
+
+left_join(
+    dat_wide,
+    env_avg,
+    by = c("site", "date")
+  ) %T>% 
+  print() %>%
+  distinct(cruise)
+
+
+```
+
+```{r}
+dat_filt %>%
+  distinct(scientificname)
+```
+
