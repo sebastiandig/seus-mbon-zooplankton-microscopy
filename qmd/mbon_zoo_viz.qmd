@@ -61,7 +61,7 @@ taxa_func <- function(..., incld_lvl = TRUE) {
 
 # 3.0 Load Dataset
 
-```{R load file}
+```{r load-file}
 #| code-summary: load file
 dat <- 
   here("data", "zoo_data_pre_obis_merg.csv") %>%
@@ -89,7 +89,13 @@ dat <-
     .after     = date,
     year       = year(date_time), 
     date_month = ym(format(date, "%Y-%m"))
-    ) %T>% 
+    ) %>%
+  # forces the month to be the same month as the start of the cruise
+  # - only occurs if a cruise overlaps 2 different months (i.e. April into May)
+  mutate(
+    .by = cruise_id,
+    date_month = min(date_month, na.rm = TRUE)
+  ) %T>% 
   print()
 ```
 ## 3.1 Print Information
@@ -102,8 +108,10 @@ print(paste("stations:", paste(unique(dat$site), collapse = ", ")))
 print(paste("mesh sizes available: ", paste(unique(dat$mesh), collapse = ", ")))
 print(paste("life stages:", paste(unique(dat$lifeStage), collapse = ", ")))
 
-dat_nest <- dat %>%
+dat_nest <- 
+  dat %>%
   nest(data = c(taxa:last_col()))
+
 count(dat_nest, station, site)
 count(dat_nest, station, site, mesh)
 count(dat_nest, station, site, mesh, date_month)
@@ -496,7 +504,9 @@ dat_lowest_500 %>%
     )
   ) +
   geom_col() +
-  geom_point(aes(y = (total / 1000)), color = "red", fill = "white", shape = 21) +
+  # geom_point(aes(y = (total / 1000)), color = "red", fill = "white", shape = 21) +
+  # geom_point(aes(y = (total / 1000)), color = "#B300FF", fill = "white", shape = 21) +
+  geom_point(aes(y = (total / 1000)), color = "#F200D1", fill = "white", shape = 21) +
   geom_hline(yintercept = -0.005, linewidth = rel(1)) +
   labs(
     y = NULL,
@@ -520,9 +530,12 @@ dat_lowest_500 %>%
     axis.text.x           = element_text(angle = 45, hjust = 1),
     axis.line.x.bottom    = element_blank(),
     axis.line.x.top       = element_line(color = "black", linewidth = rel(1)),
-    axis.text.y.right     = element_text(color = "red"),
-    axis.title.y.right    = element_text(color = "red"),
-    axis.ticks.y.right    = element_line(color = "red")
+    # axis.text.y.right     = element_text(color = "red"),
+    # axis.title.y.right    = element_text(color = "red"),
+    # axis.ticks.y.right    = element_line(color = "red")
+    axis.text.y.right     = element_text(color = "#F200D1"),
+    axis.title.y.right    = element_text(color = "#F200D1"),
+    axis.ticks.y.right    = element_line(color = "#F200D1")
   )
 ```
 
@@ -719,7 +732,7 @@ dat_cope <-
     & !str_detect(site, "9B|57")  # site
     & (mesh == 500 | mesh == 200) # mesh size
     & is.na(lifeStage)            # assumed na is adult
-  )  %>% 
+  ) %>% 
   mutate(
     site = fct(site, c("MR", "LK", "WS")),
     station = fct(station, c("Molasses Reef", "Looe Key (deep)", "Western Sambo")), 
@@ -729,7 +742,7 @@ dat_cope <-
       # incld_lvl = FALSE,
       taxa_func
     ),
-  )  %>%
+  ) %>%
   unnest(taxa_level) %>%
   summarise(
     .by = c(station, site, mesh, year, date_month, taxa_level),
