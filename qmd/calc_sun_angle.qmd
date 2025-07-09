@@ -1,0 +1,173 @@
+---
+title: "Calculate Sun Angle"
+author: "Sebastian Di Geronimo"
+date: 2025-06-05
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+This file calculates the nautical dawn and dusk based on location and day.
+
+The time and location of sample is then compared to nautical dawn and dusk to 
+determine if the sample was taken during day time, night time, or cerpuslar 
+dya/night (i.e. 1 hour buffer around nautical dawn/dusk).
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+  # additional
+  suncalc
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+## 2.2 Load Dataset
+
+Load microscopy metadata
+
+```{r load-data}
+zoo_time <-
+  here("data") %>%
+  dir_ls(regexp = "obis_merg") %>%
+  read_csv(show_col_types = FALSE) %>%
+  select(cruise_id, site, station, mesh, date_time, date, time_gmt, lat_in,
+         lon_in) %>%
+  distinct() %>%
+  mutate(
+    date = as_date(date),
+    sun_angle = pmap(
+      list(.x = date, .y = lat_in, .z = lon_in),
+      \(.x, .y, .z) getSunlightTimes(
+        date = .x, lat = .y, lon = .z,
+        keep = c("nauticalDawn", "nauticalDusk")
+      )
+    )
+  ) %>%
+  unnest(sun_angle, names_sep = "_") %>%
+  mutate(
+     day_night = case_when(
+      between(
+        date_time,
+        sun_angle_nauticalDawn + hours(1),
+        sun_angle_nauticalDusk - hours(1)
+      ) ~ "day",
+      between(
+        date_time,
+        sun_angle_nauticalDawn,
+        sun_angle_nauticalDawn + hours(1)
+      ) ~ "crepuscular dawn",
+      between(
+        date_time,
+        sun_angle_nauticalDusk - hours(1),
+        sun_angle_nauticalDusk
+      ) ~ "crepuscular dusk",
+      .default = "night"
+    )
+  ) %T>% 
+  print()
+
+zoo_time %>%
+  count(day)
+
+zoo_time %>%
+  count(mesh, day)
+zoo_time %>%
+  count(station, day)
+```
+
+
+```{r metadata-full}
+if (dir_exists(here("~", "Box", "IMaRS Zooplankton data"))) {
+  meta_path <- here(
+    "~", "Box", "IMaRS Zooplankton data", "cruise_logsheets",
+    "meta_combined.csv"
+  )
+} else {
+  meta_path <- rstudioapi::selectFile()
+}
+
+meta_full <-
+  meta_path %>%
+  read_csv(show_col_types = FALSE) %>%
+  select(cruise_id:lon_in) %T>%
+  print()
+
+
+meta_sun <-
+  meta_full %>%
+  mutate(
+    sun_angle = pmap(
+      list(.x = date, .y = lat_in, .z = lon_in),
+      \(.x, .y, .z) getSunlightTimes(
+        date = .x, lat = .y, lon = .z,
+        keep = c("nauticalDawn", "nauticalDusk")
+      )
+    )
+  ) %>%
+  unnest(sun_angle, names_sep = "_") %>%
+  mutate(
+    day_night = case_when(
+      between(
+        date_time,
+        sun_angle_nauticalDawn + hours(1),
+        sun_angle_nauticalDusk - hours(1)
+      ) ~ "day",
+      between(
+        date_time,
+        sun_angle_nauticalDawn,
+        sun_angle_nauticalDawn + hours(1)
+      ) ~ "crepuscular dawn",
+      between(
+        date_time,
+        sun_angle_nauticalDusk - hours(1),
+        sun_angle_nauticalDusk
+      ) ~ "crepuscular dusk",
+      .default = "night"
+    )
+  ) %T>%
+  print()
+
+```
+
+```{r}
+meta_sun %>%
+  count(day_night)
+
+meta_sun %>%
+  count(mesh_size_um, day_night)
+
+meta_sun %>%
+  count(station, day_night)
+```
+# 3.0 Save Day/Night Info
+
+```{r save-sun}
+# ---- save data_set
+meta_sun %>%
+  write_csv(
+    x    = .,
+    file = here(rstudioapi::selectDirectory(), "meta_day_night.csv"),
+    na = ""
+  )
+
+```
+
