@@ -1,0 +1,302 @@
+---
+title: "Exploratory PCA"
+author: "Sebastian Di Geronimo"
+date: 2025-02-19
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+  # additional
+  vegan
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+## 2.2 Taxa Name Function
+This function will help select the lowest taxonomic name, that depends on the 
+level set in `const`
+
+```{r taxa-func}
+taxa_func <- function(..., incld_lvl = TRUE) {
+  dat <- c(...) # combine all names into a vector
+  taxa_name <- NA
+  # loop through all names to select the lowest name
+  for (i in seq(length(dat))) {
+    if (is.na(taxa_name)) {
+      taxa_name <- dat[i]
+    }
+  }
+  if (incld_lvl) {
+    taxa_name <- glue("{taxa_name} ({names(taxa_name)})")
+  }
+  return(taxa_name)
+}
+```
+
+# 3.0 Load Dataset
+
+```{r load-file}
+#| code-summary: load file
+dat <- 
+  here("data", "zoo_data_pre_obis_merg.csv") %>%
+  read_csv(show_col_types = FALSE) %T>% 
+  print()
+
+skimr::skim_tee(dat)
+
+# select columns
+dat <- 
+  dat %>%
+  filter(str_detect(site, "MR|LK|WS")) %>%
+  select(
+    cruise_id,
+    station, site, 
+    mesh,
+    date_time, date, time_gmt,
+    lat_in, lon_in,
+    maximumDepthInMeters,
+    volume_filt_cubic_m,
+    taxa, scientificname, lifeStage, ind_m3, number_ind_sample,
+    kingdom:genus
+  ) %>%
+  mutate(
+    .after     = date,
+    year       = year(date_time), 
+    date_month = ym(format(date, "%Y-%m"))
+    ) %T>% 
+  print()
+```
+
+
+
+```{r constant-copepod}
+#| echo: false
+const <- list(
+  taxa_lvl = "class", # lowest taxa level
+  mesh     = 200 #,      # mesh size
+  # site     = "WS"      # site
+)
+
+# order of taxonomic classification
+taxa_tree <- 
+  c("kingdom", "phylum", "class", "order", "family", "genus", "scientificname") %>%
+  rev()
+
+# set lowest level
+const$taxa_lvl <- taxa_tree[which(taxa_tree == const$taxa_lvl):length(taxa_tree)]
+
+const
+```
+
+```{r}
+dat_w <- 
+  dat %>%
+  filter(
+    (mesh == 200) # mesh size
+    & is.na(lifeStage)            # assumed na is adult
+  ) %>% 
+  mutate(
+    site = fct(site, c("MR", "LK", "WS")),
+    station = fct(station, c("Molasses Reef", "Looe Key (deep)", "Western Sambo")), 
+    # select the lowest taxa name available
+    taxa_level = pmap(
+      across(c(const$taxa_lvl)),
+      # incld_lvl = FALSE,
+      taxa_func
+    ),
+  ) %>%
+  unnest(taxa_level) %>%
+  summarise(
+    .by = c(station, site, mesh, year, date_month, taxa_level),
+    # ind_m3 = mean(ind_m3)
+    ind_m3 = sum(ind_m3)
+  ) %>%
+  mutate(
+    .by     = c(site, mesh, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total
+  ) %>%
+    
+  
+  pivot_wider(
+    data         = .,
+    id_cols      = -c(ind_m3, total), # *optional* vector of unaffected columns,
+    names_from   = c(taxa_level), # category column(s) to pivot wide
+    values_from  = c(percent), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    ) %T>% 
+  print()
+```
+
+```{r}
+spc_ind <-
+  dat_w %>%
+  select(-c(station:date_month)) %>%
+  mutate(
+    across(
+      everything(),
+      \(.x) if_else(is.na(.x), 0, .x)
+           )
+  ) %>%
+  scale() %T>%
+  print()
+
+dat_pca <- 
+  spc_ind %>%
+  vegdist() %>%
+  wcmdscale(eig = TRUE)
+dat_pca <- princomp(spc_ind)
+
+```
+
+
+
+```{r}
+# shelf(vegan)
+
+
+ind_values <- 
+  labdsv::indval(spc_ind, clustering = dat_w$site) 
+ind_values %>%
+  print() %>%
+  summary(type = "long")
+
+
+spc_keep <- 
+  ind_values$indval %>%
+  rownames_to_column(var = "species") %>%
+  pivot_longer(
+    data      = .,
+    cols      = c(MR, LK, WS), # columns to pivot long,
+    names_to  = "site", # desired name for category column
+    values_to = "ind_val", # desired name for value column
+  ) %>%
+  arrange(-ind_val) %>%
+  slice_head(n = 9)
+```
+
+```{r}
+factoextra::fviz_pca_ind(
+  X = dat_pca,
+  col.ind = dat_w$site,
+  geom = "point")
+factoextra::fviz_pca_var(
+  X = dat_pca,
+  select.var = list(name = spc_keep$species)
+  )
+
+
+factoextra::fviz_pca_biplot(
+  X = dat_pca,
+  select.var = list(name = spc_keep$species),
+  col.ind = dat_w$site,
+  geom = "point"
+  )
+
+factoextra::fviz_pca_biplot(
+  X = dat_pca,
+  select.var = list(name = spc_keep$species),
+  col.ind = format(dat_w$date_month, "%Y"),
+  geom = "point",
+  # addEllipses = TRUE
+  )
+
+factoextra::fviz_pca_biplot(
+  X = dat_pca,
+  select.var = list(name = spc_keep$species),
+  col.ind = dat_w$site,
+  geom = "point",
+  # addEllipses = TRUE
+  )
+```
+
+```{r}
+dat_pca %>%
+  scores() %>%
+  as_tibble(rownames = "sites") %>%
+  
+  filter(
+    Comp.1 == max(Comp.1)
+    | Comp.1 == min(Comp.1)
+    )
+```
+
+```{r}
+dat_w %>%
+  slice(c(1, 23))
+```
+
+```{r}
+dat %>%
+  select(1:mesh, date_month, year) %>%
+  distinct() %>%
+  filter(mesh > 64) %>%
+  count(mesh, year, site)
+  count(mesh)
+
+spc_info <- 
+  select(dat, scientificname, phylum:last_col()) %>%
+  distinct()
+  
+spc_info %>%
+  distinct(phylum)
+
+tibble::tribble(
+  ~ `Taxonomic level`, ~ Count,
+  "phylum", distinct(spc_info, phylum) %>% nrow(),
+  "class", distinct(spc_info, class) %>% nrow(),
+  "order", distinct(spc_info, order) %>% filter(!is.na(order)) %>% nrow(),
+  "family", distinct(spc_info, family) %>% filter(!is.na(family)) %>% nrow(),
+  "genus", distinct(spc_info, genus) %>% filter(!is.na(genus)) %>% nrow(),
+  "species",  filter(spc_info, !is.na(genus) & scientificname != genus) %>% nrow()
+) %>%
+  mutate(
+    `Taxonomic level` = str_to_title(`Taxonomic level`)
+  ) %>%
+  writexl::write_xlsx(here("data", "count_info.xlsx"))
+
+
+ 
+
+distinct(spc_info, genus) %>%
+  filter(!is.na(genus))
+
+spc_info %>%
+  mutate(
+    family = if_else(is.na(genus), family, NA)
+  ) %>%
+  distinct(family)
+
+dat %>%
+  select(1:mesh, date_month, year) %>%
+  distinct() %>%
+  filter(year == 2018
+         & site == "WS"
+         & mesh == 200) 
+```
+
