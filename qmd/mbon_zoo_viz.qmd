@@ -64,7 +64,8 @@ taxa_func <- function(..., incld_lvl = TRUE) {
 ```{r load-file}
 #| code-summary: load file
 dat <- 
-  here("data", "zoo_data_pre_obis_merg.csv") %>%
+  # here("data", "zoo_data_pre_obis_merg.csv") %>%
+  rstudioapi::selectFile() %>%
   read_csv(show_col_types = FALSE) %T>% 
   print()
 
@@ -372,13 +373,15 @@ dat_lowest_200 %>%
     taxa_level = fct_reorder(taxa_level, percent, .fun = mean),
     date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
   ) %>%
+  filter(total < 85000) %T>% 
+  print() %>%
   ggplot(
     aes(x = date_month2, y = percent, fill = taxa_level, 
         color = after_scale(prismatic::clr_darken(fill, 0.3))
         )
          ) +
   geom_col() +
-  geom_point(aes(y = total / 10000), color = "red", fill = "white", shape = 21) +
+  geom_point(aes(y = total / 20000), color = "red", fill = "white", shape = 21) +
   geom_hline(yintercept = -0.005, linewidth = rel(1)) +
   labs(
     y = NULL,
@@ -387,9 +390,10 @@ dat_lowest_200 %>%
     title = NULL
   ) +
   scale_y_continuous(
+    # limits = c(0, 1.1),
     expand = c(0, 0),
     labels = scales::label_percent(),
-     sec.axis = sec_axis(transform = ~ .x * 10000, 
+     sec.axis = sec_axis(transform = ~ .x * 20000, 
                          name = expression(paste("# Individual m")^-3)
                          )
   ) +
@@ -423,6 +427,7 @@ dat_lowest_200 %>%
     taxa_level = fct_reorder(taxa_level, percent, .fun = max),
     date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
   ) %>%
+  filter(total < 85000) %>%
   ggplot(
     aes(x = date_month2, y = ind_m3, fill = taxa_level, 
         color = after_scale(prismatic::clr_darken(fill, 0.3))
@@ -506,7 +511,7 @@ dat_lowest_500 %>%
   geom_col() +
   # geom_point(aes(y = (total / 1000)), color = "red", fill = "white", shape = 21) +
   # geom_point(aes(y = (total / 1000)), color = "#B300FF", fill = "white", shape = 21) +
-  geom_point(aes(y = (total / 1000)), color = "#F200D1", fill = "white", shape = 21) +
+  geom_point(aes(y = (total / 5000)), color = "#F200D1", fill = "white", shape = 21) +
   geom_hline(yintercept = -0.005, linewidth = rel(1)) +
   labs(
     y = NULL,
@@ -515,9 +520,10 @@ dat_lowest_500 %>%
     title = NULL
   ) +
   scale_y_continuous(
+    limits = c(0, 1),
     expand   = c(0, 0),
     labels   = scales::label_percent(),
-    sec.axis = sec_axis(transform = ~ .x * 1000, 
+    sec.axis = sec_axis(transform = ~ .x * 5000, 
                         name = expression(paste("# Individual m")^-3)
                         )
   ) +
