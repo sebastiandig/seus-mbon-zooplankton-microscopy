@@ -1,0 +1,276 @@
+---
+title: "Microscopy Data From Long to Wide Format"
+author: "Sebastian Di Geronimo"
+date: 2025-09-26
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+  # additional
+  suncalc
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+## 2.2 Load Dataset
+
+Load microscopy metadata
+
+```{r load-data}
+zoo_dat <-
+  here("data") %>%
+  dir_ls(regexp = "obis_merg") %>%
+  read_csv(show_col_types = FALSE) %>%
+  filter(!str_detect(station, "\\d"))  %>%
+  mutate(cruise_id = str_replace(cruise_id, "WS20230", "WS20231")) %T>%
+  print()
+
+
+```
+
+# 3.0 Convert Zooplankton Data to Wide Format 
+
+Select specific columns to keep
+Pivot wider by all metadata
+```{r long-to-wide}
+zoo_dat_sel <- 
+  zoo_dat %>%
+  select(
+    cruise_id:lon_in, maximumDepthInMeters, volume_filt_cubic_m, vol_notes,
+    scientificName, lifeStage, ind_m3, number_ind_sample
+  ) %T>% 
+  print()
+
+zoo_dat_wide <- 
+  zoo_dat_sel %>% 
+  replace_na(list(lifeStage = "")) %>% 
+  arrange(scientificName) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise_id:vol_notes), # *optional* vector of unaffected columns,
+    names_from   = c(scientificName, lifeStage), # category column(s) to pivot wide
+    values_from  = c(ind_m3), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    values_fill  = 0,
+    names_repair = janitor::make_clean_names
+    ) %>%
+  arrange(site, mesh, date_time) %>%
+  mutate(
+    .after = time_gmt,
+    sun_angle = pmap(
+      list(.x = date, .y = lat_in, .z = lon_in),
+      \(.x, .y, .z) getSunlightTimes(
+        date = .x, lat = .y, lon = .z,
+        keep = c("nauticalDawn", "nauticalDusk")
+      )
+    )
+  ) %>%
+  unnest(sun_angle, names_sep = "_") %>%
+  mutate(
+    .before = lat_in,
+     day_night = case_when(
+      between(
+        date_time,
+        sun_angle_nauticalDawn + hours(1),
+        sun_angle_nauticalDusk - hours(1)
+      ) ~ "day",
+      between(
+        date_time,
+        sun_angle_nauticalDawn,
+        sun_angle_nauticalDawn + hours(1)
+      ) ~ "crepuscular dawn",
+      between(
+        date_time,
+        sun_angle_nauticalDusk - hours(1),
+        sun_angle_nauticalDusk
+      ) ~ "crepuscular dusk",
+      .default = "night"
+    )
+  ) %>%
+  select(-c(sun_angle_date, sun_angle_lat, sun_angle_lon)) %T>% 
+  print()
+```
+
+# 4.0 Save Wide Zooplankton Data
+
+```{r save-csv}
+# ---- save zoo_micro_wide ---- #
+if (!file_exists(here("data", "zoo_micro_wide.csv"))) {
+  zoo_dat_wide %>%
+    write_csv(
+      file = here("data", "zoo_micro_wide.csv"),
+      na = ""
+    )
+} else {
+  message("Wide file format already exist, not overwriting!")
+}
+
+```
+
+
+# 5.0 Load Nutrient Data from NOAA
+
+## 5.1 NOAA String to Remove
+
+```{r}
+noaa_bad <- c(
+  "NA", "Skip too shallow",
+  "97/98", "109/110",
+  "113/114", "115/116",
+  "117/118", "-",
+  " Aboard R/V Savannah", "Lost ",
+  "Lost", "Do Not Use (Discrete Chl samples not usable)",
+  "Broken Vial", "Missing Vial ",
+  "Missed", "Double labeled",
+  "Missing", "RE-CAST NOT SAMPLED",
+  "Missing ", "NOT COLLECTED",
+  "Broken", "Do Not Use (Discrete Chl samples not usable",
+  "Sensor bad", "Missing Tube ",
+  "Bottles never tripped - recast", "Sensor Drift ",
+  "Gain far too high unusable", "Sensor Cut out",
+  "Excluded", "Data lost from Acetone Spill",
+  "77,78", "79,80",
+  "81,82", "Bad analysis",
+  "Acidified prior to Fo", "173/174",
+  "175/176", "177/178","179/180", "182/183","184/185", "186/187","188/189", 
+  "190/191","192/193", "107/108","112/113", "152/153","155/156", "162/163",
+  "165/166", "193/194","128, 129", "131, 132","163, 164", "165, 166","167, 168",
+  "169, 170","171, 172", "175, 176","158/159", "160/161","164/165", "172/173",
+  "174/175", "178/179","180/181", "189/190","7/8", "43/44","51/52", "85/86",
+  "89/90", "135/136","138/139", "153/154","170/171", "69,70","71,72", 
+  "Unusable", "Spilled", "255/256"
+)
+```
+
+
+```{r load-nutrients}
+nutr_dat <-
+  here("data") %>%
+  dir_ls(regexp = "SampleLog") %>%
+  str_subset("~", negate = TRUE) %>%
+  readxl::read_xlsx(
+    .name_repair = janitor::make_clean_names,
+    na = noaa_bad,
+    guess_max = 3000
+    ) 
+
+nutr_filt_stn <- 
+  nutr_dat %>%
+  filter(
+    str_detect(station, "MR|LK|WS")
+    & between(year(date_gmt), year(range(zoo_dat_wide$date))[1], year(range(zoo_dat_wide$date))[2])     
+    ) %>%
+  mutate(station = if_else(str_detect(station, "LK"), "LK", station)) %T>% 
+  print()
+
+nutr_filt_stn %>%
+  distinct(date_gmt) %>%
+  count(year(date_gmt))
+
+nutr_filt_stn_avg <-
+  nutr_filt_stn %>%
+  select(
+    "cruise_id" = cruise, "site" = station, depth, temperature, salinity,
+    avg_chl_a_ug_l, avg_phaeophytin_ug_l, nh4_u_m:si_u_m, oxygen_umol_l,
+    dic_umol_kg, p_h
+  ) %>%
+  summarise(
+    .by = c(cruise_id, site),
+    across(where(is.numeric), ~ mean(.x, na.rm = TRUE))
+  ) %>%
+  janitor::remove_empty("cols") %>%
+  mutate(
+    across(where(is.numeric), ~ if_else(is.nan(.x), NA, .x))
+  ) %T>% 
+  print()
+```
+
+No zoo for:
+- WS17030
+- WS17086
+- WS17212
+- WS19119
+- WS20279
+- WS20342
+
+```{r}
+full_join(
+  zoo_dat_wide %>%
+    select(cruise_id) %>%
+    mutate(test = "zoo"),
+  nutr_filt_stn %>%
+    select("cruise_id" = cruise) %>%
+    mutate(test2 = "nut")
+) %>%
+  arrange(cruise_id) %>%
+  distinct()
+
+full_join(
+  zoo_dat_wide %>%
+    select(cruise_id, site) %>%
+    mutate(test = "zoo"),
+  nutr_filt_stn %>%
+    select("cruise_id" = cruise, "site" = station) %>%
+    mutate(test2 = "nut")
+) %>%
+  arrange(cruise_id) %>%
+  distinct()
+
+janitor::remove_empty(nutr_filt_stn, "cols")
+
+dat_merg <-
+  full_join(
+    # zoo_dat_wide[,1:13],
+    zoo_dat_wide,
+    nutr_filt_stn_avg# %>%
+      # nest(.by = c(cruise_id, site))
+  ) %>%
+  arrange(date, site, mesh) %>%
+  # average nutrient data by mean
+  # summarise(
+  #   .by = cruise_id:vol_notes,
+  #   across(where(is.numeric), ~ mean(.x, na.rm = TRUE))
+  #   ) %>%
+  filter(!is.na(mesh)) %T>% 
+  print()
+```
+
+# ---- save zoo_micro_wide ---- 
+```{r save-csv}
+if (!file_exists(here("data", "zoo_micro_wide_nutr_avg.csv"))) {
+  dat_merg %>%
+    write_csv(
+      file = here("data", "zoo_micro_wide_nutr_avg.csv"),
+      na = ""
+    )
+} else {
+  message("Wide file format already exist, not overwriting!")
+}
+
+```
+
+
