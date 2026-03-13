@@ -1,0 +1,253 @@
+---
+title: "Relative Abundance from EcoTaxa"
+author: "Sebastian Di Geronimo"
+date: 2026-03-13
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+  # additional
+  
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+## 2.2 Load Master Taxonomic Sheet
+
+```{r}
+# rstudioapi::selectDirectory()
+
+reach_dir <- here("~", "Box", "IMaRS_Projects", "FLRACEP V (REACH) project")
+
+taxa_master <- 
+  here(reach_dir, "DataManagement", "EcoTaxa") %>%
+  dir_ls(regexp = "master_taxa") %>%
+  readxl::read_excel() %T>% 
+  print()
+```
+```{r}
+meta_path <- 
+  reach_dir %>%
+  dir_ls(regexp = "(?i)fieldwork") %>%
+  dir_ls(type = "directory") %>%
+  dir_ls(regexp = "logsheet") %>%
+  str_subset("(?i)aquatic", negate = TRUE) %T>% 
+  print()
+
+meta_dat <- 
+  meta_path %>%
+  map(
+    .x = .,
+    \(.x) {
+      readxl::excel_sheets(.x)
+      
+      readxl::read_excel(.x, sheet = "zoo_log") %>%
+      janitor::clean_names() %>%
+      janitor::remove_empty("cols")
+    }
+  ) %>%
+  list_rbind() %>%
+  filter(mesh_size_um == 333) %>%
+  filter(!str_detect(net_type, "T")) %>%
+  arrange(event_date, cruise_id) %T>%
+  # distinct(cruise_id:cast_number) %T>% 
+  print()
+
+  
+  
+```
+
+
+## 2.3 Load Dataset
+
+```{r load-data}
+zoo_dat <-
+  here("data", "reach_ecotaxa") %>%
+  dir_ls(regexp = "tsv") %>%
+  read_tsv(show_col_types = FALSE) %>%
+  arrange(taxonid) %T>% 
+  print() %>%
+  filter(!str_detect(sampleid, "(?i)dummy")) %>%
+  summarise(
+    .by = c(sampleid, acquisid, taxonid),
+    count = sum(count)
+  ) %>%
+  mutate(
+    .after = sampleid,
+    cruise = glue("REACH-{str_extract(sampleid, '00\\\\d')}"),
+    station = str_extract(sampleid, "S\\d{1,2}"),
+    station = case_when(
+      # str_detect(station, "S4") ~ "S04",
+      str_detect(station, "S10") ~ "S10/C25",
+      str_detect(station, "S17") ~ "S17/C26",
+      .default = station
+    )
+  ) %>%
+  summarise(
+    .by = c(cruise, station, taxonid),
+    count = sum(count, na.rm = TRUE),
+  ) %>%
+  left_join(
+    taxa_master,
+    by = c("taxonid" = "object_annotation_category")
+  ) %>%
+  relocate(count, .after = last_col()) %T>% 
+  print()
+```
+
+# Functional Group
+
+```{r func-grp}
+zoo_func_grp <- 
+  zoo_dat %>%
+  filter(!is.na(functional_group)) %>%
+  
+  summarise(
+    .by = c(cruise, station, functional_group),
+    count = sum(count, na.rm = TRUE)
+  ) %>%
+  mutate(
+    .by = c(cruise, station),
+    total = sum(count),
+    prop  = round(count / total, 4) * 100
+  ) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise, station), # *optional* vector of unaffected columns,
+    names_from   = c(functional_group), # category column(s) to pivot wide
+    values_from  = c(prop), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    ) %T>% 
+  print()
+```
+# Life Stage
+
+```{r life-stage}
+zoo_life <- 
+  zoo_dat %>%
+  filter(!is.na(life_stage)) %>%
+  
+  summarise(
+    .by = c(cruise, station, life_stage),
+    count = sum(count, na.rm = TRUE)
+  ) %>%
+  mutate(
+    .by = c(cruise, station),
+    total = sum(count),
+    prop = round(count / total, 4) * 100
+  ) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise, station), # *optional* vector of unaffected columns,
+    names_from   = c(life_stage), # category column(s) to pivot wide
+    values_from  = c(prop), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    ) %T>% 
+  print()
+```
+
+# Taxon
+```{r taxon}
+zoo_taxa <- 
+  zoo_dat %>%
+  filter(!is.na(taxonid)) %>%
+  
+  summarise(
+    .by = c(cruise, station, taxonid),
+    count = sum(count, na.rm = TRUE)
+  ) %>%
+  mutate(
+    .by = c(cruise, station),
+    total = sum(count),
+    prop = round(count / total, 4) * 100
+  ) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise, station), # *optional* vector of unaffected columns,
+    names_from   = c(taxonid), # category column(s) to pivot wide
+    values_from  = c(prop), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    ) %T>% 
+  print()
+```
+# Taxon Level
+```{r taxon-lvl}
+zoo_taxa_lvl <- 
+  zoo_dat %>%
+  filter(!is.na(taxon_level)) %>%
+  
+  summarise(
+    .by = c(cruise, station, taxon_level),
+    count = sum(count, na.rm = TRUE)
+  ) %>%
+  mutate(
+    .by = c(cruise, station),
+    total = sum(count),
+    prop = round(count / total, 4) * 100
+  ) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise, station), # *optional* vector of unaffected columns,
+    names_from   = c(taxon_level), # category column(s) to pivot wide
+    values_from  = c(prop), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    ) %T>% 
+  print()
+```
+
+
+```{r}
+prelim_file <- here("data", "reach_ecotaxa", "rel_abund_prelim.xlsx")
+list(
+  "data"             = zoo_dat,
+  "taxon"            = zoo_taxa,
+  "taxa level"       = zoo_taxa_lvl,
+  "lifestage"        = zoo_life,
+  "functional group" = zoo_func_grp
+) %>%
+  writexl::write_xlsx(path = )
+
+if (FALSE) {
+  file_copy(
+    prelim_file,
+    here(reach_dir, "DataManagement", "EcoTaxa")
+  )
+}
+```
+
+
+
+
+
+
+
+
+
