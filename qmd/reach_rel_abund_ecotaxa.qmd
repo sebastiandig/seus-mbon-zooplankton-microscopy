@@ -49,6 +49,7 @@ taxa_master <-
   readxl::read_excel() %T>% 
   print()
 ```
+
 ```{r}
 meta_path <- 
   reach_dir %>%
@@ -88,6 +89,10 @@ meta_dat <-
 zoo_dat <-
   here("data", "reach_ecotaxa") %>%
   dir_ls(regexp = "tsv") %>%
+  file_info() %>%
+  arrange(desc(birth_time)) %>%
+  slice(1) %>%
+  pull(path) %>%
   read_tsv(show_col_types = FALSE) %>%
   arrange(taxonid) %T>% 
   print() %>%
@@ -110,7 +115,8 @@ zoo_dat <-
   summarise(
     .by = c(cruise, station, taxonid),
     count = sum(count, na.rm = TRUE),
-  ) %>%
+  ) %T>% 
+  print() %>%
   left_join(
     taxa_master,
     by = c("taxonid" = "object_annotation_category")
@@ -118,6 +124,30 @@ zoo_dat <-
   relocate(count, .after = last_col()) %T>% 
   print()
 ```
+# Richness
+
+```{r rich}
+rich_cruise <-
+  zoo_dat %>%
+  filter(!is.na(functional_group) & count > 0) %>%
+  distinct(cruise, taxonid) %>%
+  count(cruise) %T>% 
+  print()
+
+rich_stn <- 
+  zoo_dat %>%
+  filter(!is.na(functional_group) & count > 0) %>%
+  distinct(cruise, station, taxonid) %>%
+  count(cruise, station) %T>% 
+  print()
+
+spc_rich <- 
+  bind_rows(rich_cruise, rich_stn) %>%
+  arrange(cruise) %>%
+  mutate(station = if_else(is.na(station), "all", station)) %T>% 
+  print()
+```
+
 
 # Functional Group
 
@@ -223,25 +253,57 @@ zoo_taxa_lvl <-
   print()
 ```
 
+# Feeding Strategy
 
-```{r}
+```{r feed-strat}
+zoo_taxa_lvl <- 
+  zoo_dat %>%
+  filter(!is.na(feeding_strategy)) %>%
+  
+  summarise(
+    .by = c(cruise, station, feeding_strategy),
+    count = sum(count, na.rm = TRUE)
+  ) %>%
+  mutate(
+    .by = c(cruise, station),
+    total = sum(count),
+    prop = round(count / total, 4) * 100
+  ) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise, station), # *optional* vector of unaffected columns,
+    names_from   = c(feeding_strategy), # category column(s) to pivot wide
+    values_from  = c(prop), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    ) %T>% 
+  print()
+```
+
+
+# Save File
+
+```{r save}
 prelim_file <- here("data", "reach_ecotaxa", "rel_abund_prelim.xlsx")
 list(
   "data"             = zoo_dat,
+  "richness"         = spc_rich,
   "taxon"            = zoo_taxa,
   "taxa level"       = zoo_taxa_lvl,
   "lifestage"        = zoo_life,
   "functional group" = zoo_func_grp
 ) %>%
-  writexl::write_xlsx(path = )
+  writexl::write_xlsx(path = prelim_file)
 
 if (FALSE) {
   file_copy(
     prelim_file,
-    here(reach_dir, "DataManagement", "EcoTaxa")
+    here(reach_dir, "DataManagement", "EcoTaxa"),
+    overwrite = TRUE
   )
 }
 ```
+
 
 
 
