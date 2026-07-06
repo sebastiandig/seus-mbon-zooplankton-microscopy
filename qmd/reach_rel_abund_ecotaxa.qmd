@@ -45,9 +45,68 @@ reach_dir <- here("~", "Box", "IMaRS_Projects", "FLRACEP V (REACH) project")
 
 taxa_master <- 
   here(reach_dir, "DataManagement", "EcoTaxa") %>%
-  dir_ls(regexp = "master_taxa") %>%
+  dir_ls(regexp = "master_taxa") %T>%
+  print() %>%
   readxl::read_excel() %T>% 
   print()
+```
+```{r}
+if (FALSE) {
+  taxa_list <-
+    taxa_master %>%
+    filter(if_any(any_of("scientificName"), ~ is.na(.))) %>%
+    distinct(object_annotation_category) %T>%
+    print()
+
+  taxa_obis <-
+    taxa_list %$%
+    obistools::match_taxa(object_annotation_category) %T>%
+    print() %>%
+    mutate(
+      acceptedNameUsageID = as.numeric(acceptedNameUsageID),
+      worrms_extd = map(
+        acceptedNameUsageID,
+        \(.x) {
+          if (is.na(.x)) {
+            return()
+          }
+
+          .x %>%
+            worrms::wm_record() %>%
+            select(kingdom:genus)
+        }
+      )
+    ) %>%
+    unnest(worrms_extd, keep_empty = TRUE) %T>% 
+    print()
+
+
+  full_taxa1 <-
+    bind_cols(
+      taxa_list,
+      taxa_obis,
+      by = c("object_annotation_category" = "scientificName")
+    ) %T>%
+    print()
+
+  full_taxa <- 
+    bind_rows(
+    select(taxa_master, 1, scientificName:last_col()) %>%
+    filter_out(is.na(scientificName)),
+    full_taxa1
+    ) %>%
+    left_join(
+      select(taxa_master, 1:notes),
+      .,
+      by = c("object_annotation_category")
+    ) %T>% 
+    print()
+  
+  writexl::write_xlsx(
+    full_taxa,
+    here(reach_dir, "DataManagement", "EcoTaxa", "reach_master_taxa.xlsx")
+  )
+}
 ```
 
 ```{r}
@@ -124,6 +183,16 @@ zoo_dat <-
   relocate(count, .after = last_col()) %T>% 
   print()
 ```
+```{r}
+zoo_dat %>%
+  filter(is.na(scientificName)) %>%
+  distinct(taxonid) %>%
+  arrange(taxonid) %>%
+  pull(taxonid) %>%
+  cat(sep = "\n")
+```
+
+
 # Richness
 
 ```{r rich}
