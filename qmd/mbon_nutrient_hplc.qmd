@@ -1,0 +1,167 @@
+---
+title: "Link Nutrient and HPLC Data"
+author: "Sebastian Di Geronimo"
+date: 2026-09-24
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+  # additional
+  
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+## 2.2 Load Dataset
+
+```{r load-zoo-cruise}
+ecotaxa_path <- here("data", "mbon") %>%
+  dir_ls(regexp = "export")
+
+
+zoo_cruise <- ecotaxa_path %>%
+  read_tsv(show_col_types = FALSE) %>%
+  distinct(sampleid) %>%
+  separate_wider_delim(
+    cols = sampleid,
+    names = c("proj", "proj2", "cruise_id", "station", "mesh", "ecotaxa"),
+    delim = "_",
+    too_many = "drop"
+  ) %>%
+  mutate(
+    .keep = "none",
+    cruise_id = str_to_upper(cruise_id),
+    station = str_to_upper(station),
+    cruise_id = replace_values(
+      cruise_id,
+      "H23138" ~ "HG23138",
+      "WS20230" ~ "WS20231",
+      "WS20278" ~ "WS20279",
+      "H23314" ~ "HG23314",
+      "WS21277" ~ "WS21278"
+      )
+    )
+zoo_cruise
+```
+
+
+```{r load-hplc}
+hplc_path <- here("data", "mbon") %>%
+  dir_ls(regexp = "hplc")
+
+hplc_stn <- 
+  read_csv(
+    hplc_path, 
+    show_col_types = FALSE, 
+    na = c("", "NA", "-9999", "-8888"),
+    name_repair = janitor::make_clean_names) %>%
+  filter(str_detect(station, "MR|LK|WS")) %>%
+  mutate(
+    cruise_id = replace_values(
+      cruise_id,
+      "H23138" ~ "HG23138",
+      "WS20230" ~ "WS20231",
+      "WS20278" ~ "WS20279"
+    ),
+    date = str_remove(date, "T.*"),
+    date = parse_date_time(date, orders = c("mdy", "ymd")),
+    date = as_date(date),
+    # replace na with 0
+    across(tot_chl_a:last_col(), ~ replace_na(.x, 0)),
+  ) %>%
+  # average duplicate samples
+  summarise(
+    .by = c(cruise_id, station, depth),
+    # metadata - take first row
+    across(c(cruise, hplc_gsfc_id, sample, date, volfilt, water_depth, 
+             date:lat, filters_replicates), 
+           first),
+    # average of data
+    across(tot_chl_a:last_col(), ~ mean(.x, na.rm = TRUE)),
+  ) %>%
+  mutate(
+    .by = c(cruise_id, station),
+    .before = depth,
+    depth_class = case_when(
+      n() > 1  & depth == min(depth) ~ "Surface", 
+      n() > 1  & depth == max(depth) ~ "Bottom", 
+      n() == 1 & depth < 2 ~ "Surface",
+      n() == 1 & depth > 2 ~ "Bottom",
+      .default = "other"
+    )
+  ) %>%
+  select(-c(cruise:filters_replicates))
+
+hplc_stn
+```
+
+
+
+
+```{r load-nutrients}
+nutrients <- here("data", "mbon") %>%
+  dir_ls(regexp = "SFER")
+
+nut_filt <- 
+  read_csv(nutrients, show_col_types = FALSE, ) %>%
+  filter(str_detect(station, "MR|LK|WS")) %>%
+  mutate(station = if_else(str_detect(station, "LK"), "LK", station)) %>%
+  arrange(datetime)
+```
+
+
+
+
+```{r}
+nut_hplc <- 
+  full_join(
+    nut_filt,
+    hplc_stn,
+    by = join_by(cruise_id, station, depth_class)
+  )
+
+nut_hplc
+```
+
+```{r}
+full_join(
+  mutate(zoo_cruise, type2 = "imars"),
+  mutate(nut_hplc, type = "noaa") ,# %>%
+  # distinct(cruise_id, station, type),
+  
+) %>%
+  mutate(
+    num = str_extract(cruise_id, "\\d.*")
+  ) %>%
+  arrange(num) %>%
+  filter_out(is.na(type2)) %>%
+  filter_out(is.na(tot_chl_a)) %>%
+  distinct(cruise_id, station)
+
+
+```
+
