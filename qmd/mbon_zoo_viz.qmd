@@ -63,10 +63,14 @@ taxa_func <- function(..., incld_lvl = TRUE) {
 
 ```{r load-file}
 #| code-summary: load file
+
+dat_file <- rstudioapi::selectFile() 
 dat <- 
   # here("data", "zoo_data_pre_obis_merg.csv") %>%
-  rstudioapi::selectFile() %>%
-  read_csv(show_col_types = FALSE) %T>% 
+  dat_file %>%
+  read_csv(show_col_types = FALSE) %>%
+  mutate(site = if_else(is.na(site), locationID, site)) %>%
+  filter_out(is.na(scientificName)) %T>% 
   print()
 
 skimr::skim_tee(dat)
@@ -76,6 +80,7 @@ dat <-
   dat %>%
   filter(str_detect(site, "MR|LK|WS")) %>%
   select(
+    vol_notes,
     cruise_id,
     station, site, 
     mesh,
@@ -98,6 +103,21 @@ dat <-
     date_month = min(date_month, na.rm = TRUE)
   ) %T>% 
   print()
+
+
+dat %>%
+  # filter(is.na(vol_notes)) %>%
+  distinct(cruise_id, station)
+dat %>%
+  filter(is.na(vol_notes)) %>%
+  distinct(cruise_id, station)
+
+dat %<>%
+  filter(is.na(vol_notes))
+
+dat %>%
+  select(site, locationID) %>%
+  distinct()
 ```
 ## 3.1 Print Information
 
@@ -227,6 +247,7 @@ dat_filtered %>%
   ) +
   scale_y_continuous(expand = c(0, 0)) +
   scale_fill_viridis_d(option = "A") +
+  scale_x_continuous(labels = seq(2015, 2020), breaks = seq(2015, 2020)) +
   guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
   theme_classic() +
   theme(
@@ -381,7 +402,7 @@ dat_lowest_200 %>%
         )
          ) +
   geom_col() +
-  geom_point(aes(y = total / 20000), color = "red", fill = "white", shape = 21) +
+  geom_point(aes(y = total / 10000), color = "red", fill = "white", shape = 21) +
   geom_hline(yintercept = -0.005, linewidth = rel(1)) +
   labs(
     y = NULL,
@@ -393,7 +414,7 @@ dat_lowest_200 %>%
     # limits = c(0, 1.1),
     expand = c(0, 0),
     labels = scales::label_percent(),
-     sec.axis = sec_axis(transform = ~ .x * 20000, 
+     sec.axis = sec_axis(transform = ~ .x * 10000, 
                          name = expression(paste("# Individual m")^-3)
                          )
   ) +
@@ -511,7 +532,7 @@ dat_lowest_500 %>%
   geom_col() +
   # geom_point(aes(y = (total / 1000)), color = "red", fill = "white", shape = 21) +
   # geom_point(aes(y = (total / 1000)), color = "#B300FF", fill = "white", shape = 21) +
-  geom_point(aes(y = (total / 5000)), color = "#F200D1", fill = "white", shape = 21) +
+  geom_point(aes(y = (total / 1000)), color = "#F200D1", fill = "white", shape = 21) +
   geom_hline(yintercept = -0.005, linewidth = rel(1)) +
   labs(
     y = NULL,
@@ -523,7 +544,7 @@ dat_lowest_500 %>%
     limits = c(0, 1),
     expand   = c(0, 0),
     labels   = scales::label_percent(),
-    sec.axis = sec_axis(transform = ~ .x * 5000, 
+    sec.axis = sec_axis(transform = ~ .x * 1000, 
                         name = expression(paste("# Individual m")^-3)
                         )
   ) +
