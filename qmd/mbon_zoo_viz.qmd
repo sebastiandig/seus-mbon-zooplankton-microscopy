@@ -870,6 +870,9 @@ dat_cope <-
     date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
   ) %T>%
   print() 
+
+dat_cope %>%
+  arrange(desc(total))
 ```
 
 ```{r plot-copepod}
@@ -886,6 +889,10 @@ plt_cope_rel <-
   geom_col() +
   # geom_point(aes(y = (total / 10000)), color = "black", fill = "white", shape = 21) +
   geom_hline(yintercept = -0.005, linewidth = rel(1)) +
+  geom_point(aes(y = (total / 10000)), color = "black", fill = "white", shape = 21) +
+  geom_point(
+    data = dat_lowest_both,
+    aes(y = (total / 10000)), color = "blue", fill = "white", shape = 21) +
   labs(
     y = NULL,
     x = NULL,
@@ -895,7 +902,10 @@ plt_cope_rel <-
   scale_y_continuous(
     expand = c(0, 0),
     labels = scales::label_percent(),
-    # sec.axis = sec_axis(transform = ~ .x * 10000)
+    sec.axis = sec_axis(
+      transform = ~ .x * 10000,
+      name = expression(paste("# Individual m")^-3)
+      )
   ) +
   scale_fill_viridis_d(option = "A",
                        drop = FALSE) +
