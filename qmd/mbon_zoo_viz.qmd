@@ -35,6 +35,8 @@ conflicts_prefer(
   dplyr::filter(), 
   dplyr::select()
   )
+
+dir_create(here("data", "figures"))
 ```
 
 
@@ -380,7 +382,9 @@ dat_lowest_200 <-
 
 ```{r plot-stations-200}
 #| echo: false
-dat_lowest_200 %>%
+
+plt_200_rel <- 
+  dat_lowest_200 %>%
     summarise(
     .by = c(station, site, year, date_month, taxa_level),
     # ind_m3 = mean(ind_m3)
@@ -403,7 +407,7 @@ dat_lowest_200 %>%
         )
          ) +
   geom_col() +
-  geom_point(aes(y = total / 10000), color = "red", fill = "white", shape = 21) +
+  # geom_point(aes(y = total / 10000), color = "red", fill = "white", shape = 21) +
   geom_hline(yintercept = -0.005, linewidth = rel(1)) +
   labs(
     y = NULL,
@@ -415,9 +419,10 @@ dat_lowest_200 %>%
     # limits = c(0, 1.1),
     expand = c(0, 0),
     labels = scales::label_percent(),
-     sec.axis = sec_axis(transform = ~ .x * 10000, 
-                         name = expression(paste("# Individual m")^-3)
-                         )
+    sec.axis = sec_axis(
+      transform = ~ .x * 10000, 
+      name      = expression(paste("# Individual m")^-3)
+      )
   ) +
   scale_fill_viridis_d(option = "A") +
   guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
@@ -431,10 +436,28 @@ dat_lowest_200 %>%
     axis.title.y.right    = element_text(color = "red"),
     axis.ticks.y.right    = element_line(color = "red")
   ) 
+
+plt_200_rel
+
+if (FALSE) {
+  png(
+    here("data", "figures", "zoo_200_rel.png"),
+    height = 7,
+    width = 7,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_200_rel)
+
+  dev.off()
+}
 ```
 ```{r total-biomass-200}
 #| echo: false
-dat_lowest_200 %>%
+
+plt_200_abs <- 
+  dat_lowest_200 %>%
     summarise(
     .by = c(station, site, year, date_month, taxa_level),
     # ind_m3 = mean(ind_m3)
@@ -464,7 +487,8 @@ dat_lowest_200 %>%
     title = NULL
   ) +
   scale_y_continuous(
-    expand = c(0, 0)
+    expand = c(0, 0),
+    sec.axis = sec_axis(transform = ~ .x, labels = NULL)
   ) +
   scale_fill_viridis_d(option = "A") +
   guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
@@ -473,8 +497,25 @@ dat_lowest_200 %>%
     legend.box.background = element_rect(color = "grey"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     axis.line.x.bottom = element_blank(),
+    axis.ticks.y.right = element_blank()
   ) +
   facet_wrap(~station, ncol = 1)
+
+plt_200_abs
+
+if (FALSE) {
+  png(
+    here("data", "figures", "zoo_200_abs.png"),
+    height = 7,
+    width = 7,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_200_abs)
+
+  dev.off()
+}
 ```
 
 
@@ -509,7 +550,9 @@ dat_lowest_500 <-
 
 ```{r plot-station-500}
 #| echo: false
-dat_lowest_500 %>%
+
+plt_500_rel <- 
+  dat_lowest_500 %>%
   summarise(
     .by = c(station, site, year, date_month, taxa_level),
     # ind_m3 = mean(ind_m3)
@@ -530,11 +573,11 @@ dat_lowest_500 %>%
       color = after_scale(prismatic::clr_darken(fill, 0.3))
     )
   ) +
-  geom_col() +
+  geom_col(na.rm = TRUE) +
   # geom_point(aes(y = (total / 1000)), color = "red", fill = "white", shape = 21) +
   # geom_point(aes(y = (total / 1000)), color = "#B300FF", fill = "white", shape = 21) +
   geom_point(aes(y = (total / 1000)), color = "#F200D1", fill = "white", shape = 21) +
-  geom_hline(yintercept = -0.005, linewidth = rel(1)) +
+  geom_hline(yintercept = -0.005, linewidth = rel(1), inherit.aes = FALSE) +
   labs(
     y = NULL,
     x = NULL,
@@ -542,12 +585,13 @@ dat_lowest_500 %>%
     title = NULL
   ) +
   scale_y_continuous(
-    limits = c(0, 1),
+    limits = c(NA, 1),
     expand   = c(0, 0),
     labels   = scales::label_percent(),
-    sec.axis = sec_axis(transform = ~ .x * 1000, 
-                        name = expression(paste("# Individual m")^-3)
-                        )
+    sec.axis = sec_axis(
+      transform = ~ .x * 1000, 
+      name = expression(paste("# Individual m")^-3)
+      )
   ) +
   scale_fill_viridis_d(option = "A") +
   guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
@@ -565,12 +609,31 @@ dat_lowest_500 %>%
     axis.title.y.right    = element_text(color = "#F200D1"),
     axis.ticks.y.right    = element_line(color = "#F200D1")
   )
+
+
+plt_500_rel
+
+if (FALSE) {
+  png(
+    here("data", "figures", "zoo_500_rel.png"),
+    height = 7,
+    width = 7,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_500_rel)
+
+  dev.off()
+}
 ```
 
 ```{r total-biomass-500}
 #| echo: false
-dat_lowest_500 %>%
-    summarise(
+
+plt_500_abs <- 
+  dat_lowest_500 %>%
+  summarise(
     .by = c(station, site, year, date_month, taxa_level),
     # ind_m3 = mean(ind_m3)
     ind_m3 = sum(ind_m3)
@@ -592,6 +655,7 @@ dat_lowest_500 %>%
         )
          ) +
   geom_col() +
+  geom_hline(yintercept = -0.005, linewidth = rel(1), inherit.aes = FALSE) +
   labs(
     y = NULL,
     x = "Year",
@@ -599,16 +663,35 @@ dat_lowest_500 %>%
     title = NULL
   ) +
   scale_y_continuous(
-    expand = c(0, 0)
+    expand = c(0, 0),
+    limits = c(NA, 1000),
+    sec.axis = sec_axis(transform = ~ .x, labels = NULL)
   ) +
   scale_fill_viridis_d(option = "A") +
   guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
   theme_classic() +
   theme(
     legend.box.background = element_rect(color = "grey"),
-    axis.text.x = element_text(angle = 45, hjust = 1)
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.ticks.y.right = element_blank()
   ) +
   facet_wrap(~station, ncol = 1)
+
+plt_500_abs
+
+if (FALSE) {
+  png(
+    here("data", "figures", "zoo_500_abs.png"),
+    height = 7,
+    width = 7,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_500_abs)
+
+  dev.off()
+}
 ```
 
 ## 7.3 Both
@@ -791,7 +874,9 @@ dat_cope <-
 
 ```{r plot-copepod}
 #| echo: false
-dat_cope %>%
+
+plt_cope_rel <- 
+  dat_cope %>%
   # filter(mesh == 200) %>%
   ggplot(
     aes(x = date_month2, y = percent, fill = taxa_level, 
@@ -827,5 +912,21 @@ dat_cope %>%
     axis.line.x.bottom    = element_blank(),
     strip.text.y = element_text(size = rel(0.75))
   ) 
+
+plt_cope_rel
+
+if (FALSE) {
+  png(
+    here("data", "figures", "zoo_cope_rel.png"),
+    height = 7,
+    width = 10,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_cope_rel)
+
+  dev.off()
+}
 ```
 
