@@ -64,6 +64,7 @@ taxa_func <- function(..., incld_lvl = TRUE) {
 ```{r load-file}
 #| code-summary: load file
 
+# file: zooplankton_erddap.csv
 dat_file <- rstudioapi::selectFile() 
 dat <- 
   # here("data", "zoo_data_pre_obis_merg.csv") %>%
