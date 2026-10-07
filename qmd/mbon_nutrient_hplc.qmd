@@ -39,8 +39,9 @@ conflicts_prefer(
 ## 2.2 Load Dataset
 
 ```{r load-zoo-cruise}
-ecotaxa_path <- here("data", "mbon") %>%
-  dir_ls(regexp = "export")
+ecotaxa_path <- 
+  here() %>%
+  dir_ls(regexp = "export_summary_", recurse = TRUE)
 
 
 zoo_cruise <- ecotaxa_path %>%
@@ -70,8 +71,9 @@ zoo_cruise
 
 
 ```{r load-hplc}
-hplc_path <- here("data", "mbon") %>%
-  dir_ls(regexp = "hplc")
+hplc_path <- 
+  here() %>%
+  dir_ls(regexp = "hplc_consolidate", recurse = TRUE)
 
 hplc_stn <- 
   read_csv(
@@ -123,11 +125,15 @@ hplc_stn
 
 
 ```{r load-nutrients}
-nutrients <- here("data", "mbon") %>%
-  dir_ls(regexp = "SFER")
+noaa_bad <- c(
+  "NA", "Under Review"
+)
+
+nutrients <- here() %>%
+  dir_ls(regexp = "SFER_data", recurse = TRUE)
 
 nut_filt <- 
-  read_csv(nutrients, show_col_types = FALSE, ) %>%
+  read_csv(nutrients, show_col_types = FALSE, na = noaa_bad) %>%
   filter(str_detect(station, "MR|LK|WS")) %>%
   mutate(station = if_else(str_detect(station, "LK"), "LK", station)) %>%
   arrange(datetime)
@@ -148,20 +154,183 @@ nut_hplc
 ```
 
 ```{r}
-full_join(
-  mutate(zoo_cruise, type2 = "imars"),
-  mutate(nut_hplc, type = "noaa") ,# %>%
-  # distinct(cruise_id, station, type),
-  
-) %>%
-  mutate(
-    num = str_extract(cruise_id, "\\d.*")
+zoo_env <- 
+  full_join(
+    mutate(zoo_cruise, type2 = "zoo"),
+    mutate(nut_hplc, type = "noaa") ,# %>%
+    # distinct(cruise_id, station, type),
   ) %>%
-  arrange(num) %>%
+  mutate(
+    .after = 1,
+    order = str_extract(cruise_id, "\\d.*")
+  ) %>%
+  mutate(
+    .after = datetime, 
+    date = as_date(datetime)
+    ) %>%
+  arrange(order)
+  
+zoo_env %>%
+  filter(str_detect(cruise_id, "HG25083|SV18173|WS14335|WS15264|WS17212|WS19028|WS19210")) %>%
+  nest(.by = cruise_id) %>%
+  pull(data)
+  count(cruise_id, station) %>%
+  filter(n != 2)
+  filter(is.na(type2)) %>%
   filter_out(is.na(type2)) %>%
-  filter_out(is.na(tot_chl_a)) %>%
+  # filter_out(is.na(tot_chl_a)) %>%
   distinct(cruise_id, station)
 
 
+```
+
+HG25083	LK	4		
+HG25083	MR	4		
+HG25083	WS	4		
+SV18173	LK	3		
+WS14335	LK	1		
+WS15264	LK	3		
+WS17212	MR	3		
+WS19028	WS	3		
+WS19210	LK	3		
+WS19210 WS  3
+
+```{r}
+integrate_profile <- function(depth, x) {
+  ok <- !is.na(depth) & !is.na(x)
+
+  if (sum(ok) < 2) {
+    NA_real_
+  } else {
+    pracma::trapz(depth[ok], x[ok])
+  }
+}
+
+zoo_env %>%
+  arrange(cruise_id, station, depth.x) %>%
+  summarise(
+    .by = c(cruise_id, station, year:station_type),
+    n_depths = n(),
+    max_depth = max(depth.x, na.rm = TRUE),
+    min_depth = min(depth.x, na.rm = TRUE),
+    # max_chl = max(chl, na.rm = TRUE),
+    # min_chl = min(chl, na.rm = TRUE),
+    across(
+      c(chl, pheo, nh4, po4, no3_no2, no3, no2, si),
+      ~ integrate_profile(depth.x, .x),
+      .names = "{.col}_integrated"
+    )
+  )
+
+pracma::trapz((c(0, 31.6)), (c(0.708, 0.338)))
+pracma::trapz( (c(0, 14, 31.6)), (c(0.708, 1, 0.338)))
+```
+
+```{r}
+zoo_env %>%
+      
+  ggplot() +
+  geom_path(
+    aes(x = date, color = station, y = si), 
+    na.rm = TRUE
+  ) +
+  geom_point(
+    aes(x = date, color = station, y = si), 
+    na.rm = TRUE
+  ) +
+  labs(
+    title = "Silcate"
+  ) +
+  facet_grid(station~depth_order)
+
+zoo_env %>%
+      
+  ggplot() +
+  geom_path(
+    aes(x = date, color = station, y = nh4), 
+    na.rm = TRUE
+  ) +
+  geom_point(
+    aes(x = date, color = station, y = nh4), 
+    na.rm = TRUE
+  ) +
+    labs(
+    title = "NH4"
+  ) +
+  facet_grid(station~depth_order)
+
+zoo_env %>%
+      
+  ggplot() +
+  geom_path(
+    aes(x = date, color = station, y = no3_no2), 
+    na.rm = TRUE
+  ) +
+  geom_point(
+    aes(x = date, color = station, y = no3_no2), 
+    na.rm = TRUE
+  ) +
+    labs(
+    title = "NOx"
+  ) +
+  facet_grid(station~depth_order)
+
+zoo_env %>%
+  ggplot() +
+  geom_path(
+    aes(x = date, color = station, y = po4), 
+    na.rm = TRUE
+  ) +
+  geom_point(
+    aes(x = date, color = station, y = po4), 
+    na.rm = TRUE
+  ) +
+    labs(
+    title = "PO4"
+  ) +
+  facet_grid(station~depth_order)
+
+zoo_env %>%
+  mutate(
+    # .keep = "used",
+    # cruise_id, station, date,
+    .after = no2_flag,
+    no3_no2 = if_else(no3_no2 < 0.0001 | is.na(no3_no2), 0.0001, no3_no2),
+    nh4 = if_else(nh4 < 0.0001 | is.na(nh4), 0.0001, nh4),
+    po4 = if_else(po4 < 0.0001 | is.na(po4), NA, po4),
+    # po42 = po4 < 0.0001 | is.na(po4),
+    n_p_ratio = (no3_no2 + nh4) / po4,
+    ) %>%
+    # arrange(desc(ratio))
+ ggplot() +
+  geom_line(
+    aes(x = date, color = station, y = n_p_ratio, group = station), 
+    na.rm = TRUE
+  ) +
+  geom_point(
+    aes(x = date, color = station, y = n_p_ratio), 
+    na.rm = TRUE
+  ) +
+    labs(
+    title = "N:P"
+  ) +
+  scale_y_continuous(limits = c(NA, 100),
+                     oob = scales::oob_keep) +
+  facet_grid(station~depth_order)
+```
+
+```{r}
+(zoo_env %>%
+  filter_out(is.na(tot_chl_a) | is.na(chl)) %>%
+  ggplot() + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey") +
+  geom_point(aes(x = tot_chl_a, y = chl, colour = cruise_id, group = station), 
+             shape = 3, show.legend = FALSE) +
+  facet_wrap(~year) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_bw() +
+  theme(aspect.ratio = 1)) %>%
+  plotly::ggplotly()
 ```
 
