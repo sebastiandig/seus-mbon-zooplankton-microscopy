@@ -1,0 +1,845 @@
+---
+title: "Load and Pre-process Planktonscope Data"
+author: "Sebastian Di Geronimo"
+date: 2025-02-21
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here, magrittr,
+  
+  # additional
+  obistools, worrms, writexl
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+
+```
+
+This function will help select the lowest taxonomic name, that depends on the 
+level set in `const`
+
+```{r taxa-func}
+taxa_func <- function(..., incld_lvl = TRUE) {
+  dat <- c(...) # combine all names into a vector
+  taxa_name <- NA
+  # loop through all names to select the lowest name
+  for (i in seq(length(dat))) {
+    if (is.na(taxa_name)) {
+      taxa_name <- dat[i]
+    }
+  }
+  if (incld_lvl) {
+    taxa_name <- glue("{taxa_name} ({names(taxa_name)})")
+  }
+  return(taxa_name)
+}
+
+# order of taxonomic classification
+taxa_tree <- 
+  c("kingdom", "phylum", "class", "order", "family", "genus", "valid_name") %>%
+  rev()
+
+taxa_lvl <- "order" # lowest taxa level
+
+taxa_lvl <- taxa_tree[which(taxa_tree == taxa_lvl):length(taxa_tree)]
+```
+
+## 2.2 Load Metadata
+
+```{r metadata}
+meta_data_path <- 
+  here("data", "mbon") %>%
+  dir_ls(regexp = "meta") %>%
+  str_subset("~", negate = TRUE) %T>% 
+  print()
+
+meta_data <- read_csv(meta_data_path, show_col_types = FALSE)
+```
+
+
+## 2.3 Load Validated Images
+
+```{r val-img}
+zoo_validated_path <- here("data", "mbon", "zoo_validated.csv")
+
+if (!file_exists(zoo_validated_path)) {
+  # path to validated zoo file
+  zoo_val_path <-
+    here("data", "mbon") %>%
+    dir_ls() %>%
+    str_subset("ecotaxa_export") %>%
+    str_subset("score", negate = TRUE) %>%
+    print()
+
+  # column names
+  col_names <-
+    read_tsv(zoo_val_path, n_max = 0, show_col_types = FALSE) %>%
+    names()
+
+  # read and filter
+  zoo_val <-
+    read_tsv_chunked(
+      zoo_val_path,
+      chunk_size     = 100000,
+      show_col_types = FALSE,
+      callback       = DataFrameCallback$new(function(x, pos) {
+        message(glue("Row number: {pos} (in 100,000 row chunks)"))
+        x <- x %>%
+          filter(str_detect(object_annotation_status, "validated")) %>%
+          filter_out(str_detect(object_annotation_category, "detrit|artefact")) %>%
+          mutate(object_time_end = as.numeric(object_time_end))
+        return(x)
+      })
+    )
+
+  write_csv(zoo_validated, zoo_validated_path, na = "")
+  
+  rm(zoo_val_path, col_names)
+  
+} else {
+  message("Loading validated file.")
+  zoo_val <- read_csv(zoo_validated_path, show_col_types = FALSE, guess_max = Inf)
+}
+```
+
+## 2.4 Load Predicted Images with Score > 0.5
+
+```{r pred-img}
+zoo_predict_path <- here("data", "mbon", "zoo_predict.csv")
+
+if (!file_exists(zoo_predict_path)) {
+  # path to predicted zoo file
+  zoo_pred_path <-
+    here("data", "mbon") %>%
+    dir_ls() %>%
+    str_subset("ecotaxa_export") %>%
+    str_subset("score", negate = FALSE) %>%
+    print()
+
+  # column names
+  col_names <-
+    read_tsv(zoo_pred_path, n_max = 0, show_col_types = FALSE) %>%
+    names()
+  
+  # read and filter
+  zoo_pred <-
+    read_tsv_chunked(
+      zoo_score_path,
+      chunk_size     = 100000,
+      show_col_types = FALSE,
+      callback       = DataFrameCallback$new(function(x, pos) {
+        message(pos)
+        x <- x %>%
+          filter_out(str_detect(object_annotation_category, "detrit|artefact")) %>%
+          mutate(object_time_end = as.numeric(object_time_end))
+        return(x)
+      })
+    )
+  
+   write_csv(zoo_pred, zoo_predict_path, na = "")
+  
+  rm(zoo_pred_path, col_names)
+  
+} else {
+  message("Loading predict file.")
+   zoo_pred <- read_csv(zoo_predict_path, show_col_types = FALSE, guess_max = Inf)
+}
+
+```
+
+## 2.5 Merge Validated and Predicted Data
+
+
+```{r merge}
+zoo_merged <- 
+  bind_rows(
+    zoo_val,
+    zoo_pred
+  )
+```
+
+
+## 2.6 Taxa List
+
+```{r merge}
+taxa_list_path <- here("data", "mbon", "mbon_master_taxa_extend.xlsx")
+
+taxa_data <- 
+  zoo_merged %>%
+    distinct(object_annotation_category)
+
+# ---- if a previous taxa list doesnt exist, create one ---- #
+if (!file_exists(taxa_list_path)) {
+  message("Creating master taxa list!")
+  # extract taxa list from object_annotation_category
+  taxa_list <-
+    taxa_data %>%
+    mutate(
+      search_name = object_annotation_category,
+      worrms = obistools::match_taxa(search_name)
+    ) %>%
+    unnest(worrms)
+
+  taxa_list
+
+  taxa_list %>%
+    filter(is.na(scientificName))
+
+  taxa_list_extended <-
+    taxa_list %>%
+    select(-match_type) %>%
+    mutate(
+      acceptedNameUsageID = as.numeric(acceptedNameUsageID),
+      taxa = map(
+        acceptedNameUsageID,
+        \(.x) {
+          if (is.na(.x)) {
+            return(NULL)
+          }
+          worrms::wm_record(.x)
+        }
+      )
+    ) %>%
+    unnest(taxa, keep_empty = TRUE) %>%
+    select(
+      object_annotation_category, search_name, scientificName, AphiaID, 
+      scientificname, valid_name, rank, kingdom:genus
+    ) %>% 
+    arrange(kingdom, phylum, class, order, family, genus)
+  
+  writexl::write_xlsx(
+    taxa_list_extended,
+    taxa_list_path
+  )
+  
+} else {
+  message("Reading previously created master taxa list.")
+  taxa_list_extended <- readxl::read_xlsx(taxa_list_path)
+}
+
+
+# ---- check if new species exist ---- #
+new_taxa <-
+  full_join(
+    taxa_list_extended,
+    taxa_data
+  ) %>%
+   mutate(
+      search_name = if_else(is.na(search_name), object_annotation_category, search_name)
+   ) %>%
+  filter(is.na(valid_name) & !str_detect(search_name, "ignore")) %>%
+  distinct(object_annotation_category, search_name)
+
+new_taxa
+
+if (nrow(new_taxa) > 0) {
+  taxa_list2 <-
+    new_taxa %>%
+    mutate(
+      worrms = obistools::match_taxa(search_name)
+    ) %>%
+    unnest(worrms)
+
+  taxa_list2_extended <- 
+    taxa_list2 %>%
+    select(-match_type) %>%
+    mutate(
+      acceptedNameUsageID = as.numeric(acceptedNameUsageID),
+      taxa = map(
+        acceptedNameUsageID,
+        \(.x) {
+          if (is.na(.x)) {
+            return(NULL)
+          }
+          worrms::wm_record(.x)
+        }
+      )
+    ) %>%
+    unnest(taxa, keep_empty = TRUE) %>%
+    select(
+      object_annotation_category, search_name, scientificName, AphiaID, 
+      scientificname, valid_name, rank, kingdom:genus
+    )
+  
+  taxa_list_extended <-
+    rows_patch(
+      taxa_list_extended,
+      taxa_list2_extended,
+      by = c("object_annotation_category", "search_name"),
+      unmatched = "ignore"
+    ) %>%
+    arrange(kingdom, phylum, class, order, family, genus)
+  
+  taxa_list_extended
+  
+  if (FALSE) {
+    writexl::write_xlsx(
+      taxa_list_extended,
+      taxa_list_path
+      )
+  }
+  
+}
+
+taxa_not_included <- 
+  taxa_list_extended %>%
+  filter_out(is.na(include) | str_detect(include, "(?i)y"))
+
+taxa_level <- 
+  taxa_list_extended %>%
+  mutate(
+    # select the lowest taxa name available
+    taxa_level = pmap(
+      across(all_of(c(taxa_lvl))),
+      incld_lvl = FALSE,
+      taxa_func
+    ),
+  ) %>%
+  unnest(taxa_level)
+
+select(taxa_level, 1, 2, valid_name, taxa_level)
+```
+
+# 3.0 Count Images and Volume per Sample and Acquisition
+
+```{r}
+# count images per acquisition
+zoo_sum <-
+  zoo_merged %>%
+  left_join(
+    taxa_list_extended,
+    by = "object_annotation_category"
+  ) %>%
+  filter_out(str_detect(search_name, "ignore")) %>%
+  
+  # adds rows to the number of extra cells 
+  mutate(
+    multiplicative = if_else(is.na(multiplicative), 1, multiplicative)
+  ) %>%
+  uncount(weights = multiplicative) %>%
+  
+  # select functional name to aggregate taxa names
+  mutate(func_name = object_annotation_category) %>%
+  summarise(
+    .by = c(sample_id, acq_id, object_lat, object_lon, object_date, object_time, 
+            func_name, sample_gear_net_opening, 
+            sample_concentrated_sample_volume, sample_dilution_factor, 
+            acq_imaged_volume
+            ),
+    count = n()
+  ) %>%
+  group_by(
+    sample_id, object_lat, object_lon, object_date,
+    object_time, sample_gear_net_opening, sample_concentrated_sample_volume, 
+    sample_dilution_factor,
+    ) %>%
+   complete(
+    acq_id,
+    func_name,
+    fill = list(count = 0),
+    explicit = FALSE
+  ) %>%
+  ungroup() %>%
+  fill(
+    acq_imaged_volume,
+    .by = acq_id,
+    .direction = "downup"
+  )
+
+zoo_sum
+
+# sum volume for total sample
+acq_total_vol <- 
+  zoo_sum %>%
+  distinct(sample_id, acq_id, acq_imaged_volume) %>%
+  reframe(
+    .by = sample_id, 
+    acq_imaged_volume_total = sum(acq_imaged_volume),
+    total_acq = n()
+    )
+
+acq_total_vol
+```
+
+
+
+```{r}
+pivot_wider(
+  data         = zoo_sum,
+  # id_cols      = c(), # *optional* vector of unaffected columns,
+  names_from   = c(func_name), # category column(s) to pivot wide
+  values_from  = c(count), # value column(s) that hold data for each category column
+  names_sep    = "_",
+  names_repair = janitor::make_clean_names
+  )
+```
+
+```{r}
+zoo_wide_aq <- 
+  left_join(
+    zoo_sum,
+    acq_total_vol
+  ) %>%
+  mutate(
+    .before = object_lat,
+    .by = c(sample_id, func_name),
+    count2 = row_number()
+  ) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(sample_id, object_lat:sample_dilution_factor, func_name,
+                     acq_imaged_volume_total, total_acq), # *optional* vector of unaffected columns,
+    names_from   = c(count2), # category column(s) to pivot wide
+    values_from  = count, # value column(s) that hold data for each category column
+    names_repair = janitor::make_clean_names,
+    names_prefix = "acq_"
+  ) %>%
+  rowwise() %>%
+  mutate(
+    total_count = sum(c_across(acq_1:last_col()))
+  ) %>%
+  ungroup() %>%
+  mutate(
+    ind_per_sample = 
+      (total_count / acq_imaged_volume_total) * 
+      sample_concentrated_sample_volume * 
+      (1 / sample_dilution_factor)
+  )
+
+zoo_wide_aq
+```
+
+
+```{r}
+zoo_wide_aq %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(sample_id:acq_imaged_volume_total), # *optional* vector of unaffected columns,
+    names_from   = c(func_name), # category column(s) to pivot wide
+    values_from  = c(ind_per_sample), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    )
+```
+
+## Extract Metadata and Align with Zooplankton Data
+
+```{r}
+meta_merge <- 
+  zoo_wide_aq  %>%
+  distinct(sample_id) %>%
+  separate_wider_delim(
+    cols        = sample_id,
+    names       = c("proj", "proj2", "cruise_id", "station", "mesh", "ecotaxa"),
+    delim       = "_",
+    too_many    = "drop",
+    cols_remove = FALSE
+  ) %>%
+  mutate(
+    cruise_id = str_to_upper(cruise_id),
+    station   = str_to_upper(station),
+    mesh      = as.numeric(str_remove("200um", "um"))
+  ) %>%
+  left_join(
+    meta_data,
+    by = c(
+      "cruise_id" = "cruise_id",
+      "station"   = "locationID", 
+      "mesh"      = "mesh_size_um")
+  ) %>%
+  
+  # renaming cruises to match NOAA SFER data
+  mutate(
+    cruise_id = replace_values(
+      cruise_id,
+      "H23138" ~ "HG23138",
+      "WS20230" ~ "WS20231",
+      "WS20278" ~ "WS20279",
+      "H23314" ~ "HG23314",
+      "WS21277" ~ "WS21278"
+      )
+  )
+
+meta_merge
+```
+
+## Calculate Density (Individuals per m^3)
+
+```{r density-calc}
+zoo_abund <-
+  right_join(
+    meta_merge,
+    zoo_wide_aq,
+    by = "sample_id"
+  ) %>%
+  mutate(
+    ind_m3 = ind_per_sample / volume_filt_cubic_m
+  ) %>%
+  
+  # cruise WS16074 has 3 entries in log sheet per site and the samples do not
+  # indicate which row it goes to
+  filter_out(str_detect(cruise_id, "WS16074"))
+
+zoo_abund
+
+
+```
+## Save Community in Wide Format
+
+```{r}
+zoo_abund_wide <- 
+  zoo_abund %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise_id:lon_in), # *optional* vector of unaffected columns,
+    names_from   = c(func_name), # category column(s) to pivot wide
+    values_from  = c(ind_m3), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names,
+    values_fill = 0
+    )
+
+zoo_abund_wide
+
+if (FALSE) {
+  write_csv(
+    zoo_abund_wide,
+    here("data", "mbon", "zoo_abund_wide.csv")
+  )
+  write_xlsx(
+    zoo_abund_wide,
+    here("data", "mbon", "zoo_abund_wide.xlsx")
+  )
+}
+
+```
+
+```{r}
+zoo_abund %>%
+  filter_out(
+    str_detect(func_name, paste(taxa_not_included$valid_name, collapse = "|")) |
+    is.na(func_name)
+  ) %>%
+  distinct(func_name) %>%
+  arrange(func_name)
+```
+
+
+```{r}
+zoo_abund 
+```
+
+# Plot Adundances
+
+## Data Summary
+
+```{r}
+zoo_abund_merge <- 
+  zoo_abund %>%
+  
+  filter_out(
+    str_detect(func_name, paste(taxa_not_included$valid_name, collapse = "|")) |
+    is.na(func_name)
+  ) %>%
+  # filter(
+  #   str_detect(func_name, "Tretomphalus")
+  #   
+  # ) %>%
+  
+  left_join(
+    select(taxa_level, object_annotation_category, valid_name, taxa_level),
+    by = c("func_name" = "object_annotation_category")
+  ) %>%
+
+mutate(
+    .after     = date,
+    year       = year(date_time), 
+    date_month = ym(format(date, "%Y-%m")),
+    site = station,
+    # taxa_level = func_name
+    ) %>%
+  
+  # forces the month to be the same month as the start of the cruise
+  # - only occurs if a cruise overlaps 2 different months (i.e. April into May)
+  mutate(
+    .by = cruise_id,
+    date_month = min(date_month, na.rm = TRUE)
+  ) %>%
+  summarise(
+    .by = c(site, year, date_month, taxa_level),
+    ind_m3 = sum(ind_m3),
+    num_spc_summed = n()
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total,
+    site    = fct(site, c("MR", "LK", "WS"))
+  ) %>%
+  mutate(
+    taxa_level  = fct_reorder(taxa_level, percent, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  )
+
+zoo_abund_merge
+```
+
+
+## Plot per Cruise
+
+```{r}
+plt_200_abs_ecotaxa <-
+  zoo_abund_merge %>%
+  
+  # filter(year < 2021) %>%                   # <------------------------- delete row ----
+  ggplot(
+    aes(x = date_month2, y = ind_m3, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_hline(yintercept = -0.005, linewidth = rel(0.75)) +
+  labs(
+    y = expression(paste("# Individual m")^-3),
+    x = "Year",
+    fill  = "Taxa Name",
+    title = glue("Taxonomic Level: {taxa_lvl[1]}")
+  ) +
+  scale_y_continuous(
+    expand = expansion(c(NA, 0.05)),
+    sec.axis = sec_axis(transform = ~ .x, labels = NULL)
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
+  theme_classic() +
+  facet_wrap(~site, ncol = 1, strip.position = "top", scales = "free_y") +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.ticks.y.right = element_blank()
+  )
+
+plt_200_abs_ecotaxa
+
+if (FALSE) {
+  png(
+    here("data", "figures", glue("ecotaxa_200_abs_{taxa_lvl[1]}.png")),
+    height = 7,
+    width = 12,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_200_abs_ecotaxa)
+
+  dev.off()
+}
+```
+
+
+## Plot per Month 
+
+```{r}
+half_year_breaks <- seq(
+  from = floor_date(min(zoo_abund_merge$date_month), "year"),
+  to   = ceiling_date(max(zoo_abund_merge$date_month), "year"),
+  by   = "6 months"
+)
+
+plt_200_abs_ecotaxa_date <-
+  zoo_abund_merge %>%
+  
+  # filter(year < 2021) %>%                   # <------------------------- delete row ----
+  ggplot(
+    aes(x = date_month, y = ind_m3, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_hline(yintercept = -0.005, linewidth = rel(0.75)) +
+  labs(
+    y = expression(paste("# Individual m")^-3),
+    x = "Year",
+    fill  = "Taxa Name",
+    title = glue("Taxonomic Level: {taxa_lvl[1]}")
+  ) +
+  scale_y_continuous(
+    expand = expansion(c(NA, 0.05)),
+    sec.axis = sec_axis(transform = ~ .x, labels = NULL)
+  ) +
+  scale_x_date(
+    breaks = scales::date_breaks("1 year"), 
+    minor_breaks = half_year_breaks,
+    date_labels = "%Y", 
+    ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 2, byrow = TRUE)) +
+  theme_classic() +
+  facet_wrap(~site, ncol = 1, strip.position = "top", scales = "free_y") +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.ticks.y.right = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", color = "gray30"),
+    panel.grid.minor.x = element_line(linetype = "dashed", color = "gray30",
+                                      linewidth = rel(0.5)),
+  )
+
+plt_200_abs_ecotaxa_date
+
+if (FALSE) {
+  png(
+    here("data", "figures", glue("ecotaxa_200_abs_{taxa_lvl[1]}_date.png")),
+    height = 7,
+    width = 10,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_200_abs_ecotaxa_date)
+
+  dev.off()
+}
+```
+
+
+
+
+```{r}
+zoo_abund_merge %>%
+  # filter(str_detect(date_month2, "Mar 2024"))
+  filter(str_detect(taxa_level, "(?i)ostracod")) %>%
+  arrange(desc(ind_m3))
+```
+
+# Only Copepoda 
+
+```{r}
+zoo_abund_merge_copepod <-
+  zoo_abund %>%
+  
+  filter_out(
+    str_detect(func_name, paste(taxa_not_included$valid_name, collapse = "|")) |
+    is.na(func_name)
+  ) %>%
+  left_join(
+    taxa_level,
+    by = c("func_name" = "object_annotation_category")
+  ) %>%
+  filter(str_detect(class, "(?i)copepoda")) %>%
+  mutate(
+    .after     = date,
+    year       = year(date_time), 
+    date_month = ym(format(date, "%Y-%m")),
+    site = station,
+    # taxa_level = func_name
+    ) %>%
+  
+  # forces the month to be the same month as the start of the cruise
+  # - only occurs if a cruise overlaps 2 different months (i.e. April into May)
+  mutate(
+    .by = cruise_id,
+    date_month = min(date_month, na.rm = TRUE)
+  ) %>%
+  summarise(
+    .by = c(site, year, date_month, taxa_level),
+    ind_m3 = sum(ind_m3),
+    num_spc_summed = n()
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total,
+    site    = fct(site, c("MR", "LK", "WS"))
+  ) %>%
+  mutate(
+    taxa_level  = fct_reorder(taxa_level, percent, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  )
+
+zoo_abund_merge_copepod
+```
+
+```{r}
+half_year_breaks <- seq(
+  from = floor_date(min(zoo_abund_merge_copepod$date_month), "year"),
+  to   = ceiling_date(max(zoo_abund_merge_copepod$date_month), "year"),
+  by   = "6 months"
+)
+
+plt_200_abs_ecotaxa_date_cope <-
+  zoo_abund_merge_copepod %>%
+  
+  # filter(year < 2021) %>%                   # <------------------------- delete row ----
+  ggplot(
+    aes(x = date_month, y = ind_m3, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_hline(yintercept = -0.005, linewidth = rel(0.75)) +
+  labs(
+    y = expression(paste("# Individual m")^-3),
+    x = "Year",
+    fill  = "Taxa Name",
+    title = glue("Taxonomic Level: {taxa_lvl[1]}")
+  ) +
+  scale_y_continuous(
+    expand = expansion(c(NA, 0.05)),
+    sec.axis = sec_axis(transform = ~ .x, labels = NULL)
+  ) +
+  scale_x_date(
+    breaks = scales::date_breaks("1 year"), 
+    minor_breaks = half_year_breaks,
+    date_labels = "%Y", 
+    ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  theme_classic() +
+  facet_wrap(~site, ncol = 1, strip.position = "top", scales = "free_y") +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.ticks.y.right = element_blank(),
+    panel.grid.major.x = element_line(linetype = "dashed", color = "gray30"),
+    panel.grid.minor.x = element_line(linetype = "dashed", color = "gray30",
+                                      linewidth = rel(0.5)),
+  )
+
+plt_200_abs_ecotaxa_date_cope
+
+if (FALSE) {
+  png(
+    here("data", "figures", glue("ecotaxa_200_abs_copepod_{taxa_lvl[1]}_date.png")),
+    height = 7,
+    width = 10,
+    res = 300,
+    units = "in"
+  )
+
+  print(plt_200_abs_ecotaxa_date_cope)
+
+  dev.off()
+}
+```
