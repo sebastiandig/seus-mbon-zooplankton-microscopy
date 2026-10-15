@@ -60,7 +60,7 @@ taxa_tree <-
   c("kingdom", "phylum", "class", "order", "family", "genus", "valid_name") %>%
   rev()
 
-taxa_lvl <- "order" # lowest taxa level
+taxa_lvl <- "class" # lowest taxa level
 
 taxa_lvl <- taxa_tree[which(taxa_tree == taxa_lvl):length(taxa_tree)]
 ```
@@ -568,11 +568,12 @@ zoo_abund_merge <-
   # ) %>%
   
   left_join(
-    select(taxa_level, object_annotation_category, valid_name, taxa_level),
+    select(taxa_level, object_annotation_category, valid_name, taxa_level, include),
     by = c("func_name" = "object_annotation_category")
   ) %>%
-
-mutate(
+  filter_out(str_detect(include, "n")) %>%
+  
+  mutate(
     .after     = date,
     year       = year(date_time), 
     date_month = ym(format(date, "%Y-%m")),
@@ -776,7 +777,7 @@ zoo_abund_merge_copepod <-
   mutate(
     taxa_level  = fct_reorder(taxa_level, percent, .fun = max),
     date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
-  )
+  ) 
 
 zoo_abund_merge_copepod
 ```
@@ -843,3 +844,5 @@ if (FALSE) {
   dev.off()
 }
 ```
+
+
