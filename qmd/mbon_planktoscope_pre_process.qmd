@@ -60,7 +60,7 @@ taxa_tree <-
   c("kingdom", "phylum", "class", "order", "family", "genus", "valid_name") %>%
   rev()
 
-taxa_lvl <- "class" # lowest taxa level
+taxa_lvl <- "family" # lowest taxa level
 
 taxa_lvl <- taxa_tree[which(taxa_tree == taxa_lvl):length(taxa_tree)]
 ```
@@ -84,6 +84,7 @@ meta_data <- read_csv(meta_data_path, show_col_types = FALSE)
 zoo_validated_path <- here(base_dir, "zoo_validated.csv")
 
 if (!file_exists(zoo_validated_path)) {
+  message("Creating validated file.")
   # path to validated zoo file
   zoo_val_path <-
     base_dir %>%
@@ -128,15 +129,20 @@ zoo_validated
 ## 2.4 Load Predicted Images with Score > 0.5
 
 ```{r pred-img}
-zoo_predict_path <- here(base_dir, "zoo_predict.csv")
+score_lvl <- 40 
+score_lvl <- 70 
+score_lvl <- 50 
+
+zoo_predict_path <- here(base_dir, glue("mbon_zoo_predict_{score_lvl}.csv"))
 
 if (!file_exists(zoo_predict_path)) {
+  message("Creating predicted file.")
   # path to predicted zoo file
   zoo_pred_path <-
     base_dir %>%
     dir_ls() %>%
     str_subset("ecotaxa_export") %>%
-    str_subset("score", negate = FALSE) %>%
+    str_subset(paste0("score_", score_lvl), negate = FALSE) %>%
     print()
 
   # column names
@@ -147,7 +153,7 @@ if (!file_exists(zoo_predict_path)) {
   # read and filter
   zoo_predicted <-
     read_tsv_chunked(
-      zoo_score_path,
+      zoo_pred_path,
       chunk_size     = 100000,
       show_col_types = FALSE,
       callback       = DataFrameCallback$new(function(x, pos) {
@@ -284,6 +290,17 @@ if (nrow(new_taxa) > 0) {
       object_annotation_category, search_name, scientificName, AphiaID, 
       scientificname, valid_name, rank, kingdom:genus
     )
+  
+  if (!any(taxa_list_extended$object_annotation_category %in% taxa_list2_extended$object_annotation_category)) {
+    taxa_list_extended <-
+      taxa_list2_extended %>%
+      filter_out(object_annotation_category %in% taxa_list_extended$object_annotation_category) %>%
+      bind_rows(
+        taxa_list_extended,
+        .,
+      ) %>%
+      arrange(kingdom, phylum, class, order, family, genus)
+  }
   
   taxa_list_extended <-
     rows_patch(
@@ -528,11 +545,11 @@ zoo_abund_wide
 if (FALSE) {
   write_csv(
     zoo_abund_wide,
-    here(base_dir, "zoo_abund_wide.csv")
+    here(base_dir, glue("zoo_abund_wide_{score_lvl}.csv"))
   )
   write_xlsx(
     zoo_abund_wide,
-    here(base_dir, "zoo_abund_wide.xlsx")
+     here(base_dir, glue("zoo_abund_wide_{score_lvl}.csv"))
   )
 }
 
@@ -648,7 +665,7 @@ plt_200_abs_ecotaxa
 
 if (FALSE) {
   png(
-    here("data", "figures", glue("ecotaxa_200_abs_{taxa_lvl[1]}.png")),
+    here("data", "figures", glue("ecotaxa_{score_lvl}_200_abs_{taxa_lvl[1]}.png")),
     height = 7,
     width = 12,
     res = 300,
@@ -714,7 +731,7 @@ plt_200_abs_ecotaxa_date
 
 if (FALSE) {
   png(
-    here("data", "figures", glue("ecotaxa_200_abs_{taxa_lvl[1]}_date.png")),
+    here("data", "figures", glue("ecotaxa_{score_lvl}_200_abs_{taxa_lvl[1]}_date.png")),
     height = 7,
     width = 10,
     res = 300,
@@ -740,6 +757,7 @@ zoo_abund_merge %>%
 # Only Copepoda 
 
 ```{r}
+taxa_name <- "copepod"
 zoo_abund_merge_copepod <-
   zoo_abund %>%
   
@@ -751,7 +769,7 @@ zoo_abund_merge_copepod <-
     taxa_level,
     by = c("func_name" = "object_annotation_category")
   ) %>%
-  filter(str_detect(class, "(?i)copepoda")) %>%
+  filter(str_detect(class, glue("(?i){taxa_name}"))) %>%
   mutate(
     .after     = date,
     year       = year(date_time), 
@@ -834,18 +852,21 @@ plt_200_abs_ecotaxa_date_cope <-
 plt_200_abs_ecotaxa_date_cope
 
 if (FALSE) {
-  png(
-    here("data", "figures", glue("ecotaxa_200_abs_copepod_{taxa_lvl[1]}_date.png")),
-    height = 7,
-    width = 10,
-    res = 300,
-    units = "in"
-  )
-
-  print(plt_200_abs_ecotaxa_date_cope)
-
-  dev.off()
-}
+  { 
+    png(
+      here("data", "figures", glue("ecotaxa_{score_lvl}_200_abs_{taxa_name}_{taxa_lvl[1]}_date.png")),
+      height = 7,
+      width = 10,
+      res = 300,
+      units = "in"
+    )
+    
+    print(plt_200_abs_ecotaxa_date_cope)
+    
+    dev.off() 
+  }
+  }
 ```
+
 
 
