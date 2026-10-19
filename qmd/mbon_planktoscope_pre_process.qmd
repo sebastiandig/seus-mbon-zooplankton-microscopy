@@ -1,5 +1,5 @@
 ---
-title: "Load and Pre-process Planktonscope Data"
+title: "MBON: Load and Pre-process Planktonscope Data"
 author: "Sebastian Di Geronimo"
 date: 2025-02-21
 format: html
@@ -33,7 +33,7 @@ conflicts_prefer(
   dplyr::select()
   )
   
-
+base_dir <- here("data", "mbon")
 ```
 
 This function will help select the lowest taxonomic name, that depends on the 
@@ -69,7 +69,7 @@ taxa_lvl <- taxa_tree[which(taxa_tree == taxa_lvl):length(taxa_tree)]
 
 ```{r metadata}
 meta_data_path <- 
-  here("data", "mbon") %>%
+  base_dir %>%
   dir_ls(regexp = "meta") %>%
   str_subset("~", negate = TRUE) %T>% 
   print()
@@ -81,12 +81,12 @@ meta_data <- read_csv(meta_data_path, show_col_types = FALSE)
 ## 2.3 Load Validated Images
 
 ```{r val-img}
-zoo_validated_path <- here("data", "mbon", "zoo_validated.csv")
+zoo_validated_path <- here(base_dir, "zoo_validated.csv")
 
 if (!file_exists(zoo_validated_path)) {
   # path to validated zoo file
   zoo_val_path <-
-    here("data", "mbon") %>%
+    base_dir %>%
     dir_ls() %>%
     str_subset("ecotaxa_export") %>%
     str_subset("score", negate = TRUE) %>%
@@ -98,7 +98,7 @@ if (!file_exists(zoo_validated_path)) {
     names()
 
   # read and filter
-  zoo_val <-
+  zoo_validated <-
     read_tsv_chunked(
       zoo_val_path,
       chunk_size     = 100000,
@@ -119,19 +119,21 @@ if (!file_exists(zoo_validated_path)) {
   
 } else {
   message("Loading validated file.")
-  zoo_val <- read_csv(zoo_validated_path, show_col_types = FALSE, guess_max = Inf)
+  zoo_validated <- read_csv(zoo_validated_path, show_col_types = FALSE, guess_max = Inf)
 }
+
+zoo_validated
 ```
 
 ## 2.4 Load Predicted Images with Score > 0.5
 
 ```{r pred-img}
-zoo_predict_path <- here("data", "mbon", "zoo_predict.csv")
+zoo_predict_path <- here(base_dir, "zoo_predict.csv")
 
 if (!file_exists(zoo_predict_path)) {
   # path to predicted zoo file
   zoo_pred_path <-
-    here("data", "mbon") %>%
+    base_dir %>%
     dir_ls() %>%
     str_subset("ecotaxa_export") %>%
     str_subset("score", negate = FALSE) %>%
@@ -143,7 +145,7 @@ if (!file_exists(zoo_predict_path)) {
     names()
   
   # read and filter
-  zoo_pred <-
+  zoo_predicted <-
     read_tsv_chunked(
       zoo_score_path,
       chunk_size     = 100000,
@@ -157,15 +159,16 @@ if (!file_exists(zoo_predict_path)) {
       })
     )
   
-   write_csv(zoo_pred, zoo_predict_path, na = "")
+   write_csv(zoo_predicted, zoo_predict_path, na = "")
   
   rm(zoo_pred_path, col_names)
   
 } else {
   message("Loading predict file.")
-   zoo_pred <- read_csv(zoo_predict_path, show_col_types = FALSE, guess_max = Inf)
+   zoo_predicted <- read_csv(zoo_predict_path, show_col_types = FALSE, guess_max = Inf)
 }
 
+zoo_predicted
 ```
 
 ## 2.5 Merge Validated and Predicted Data
@@ -174,8 +177,8 @@ if (!file_exists(zoo_predict_path)) {
 ```{r merge}
 zoo_merged <- 
   bind_rows(
-    zoo_val,
-    zoo_pred
+    zoo_validated,
+    zoo_predicted
   )
 ```
 
@@ -183,11 +186,11 @@ zoo_merged <-
 ## 2.6 Taxa List
 
 ```{r merge}
-taxa_list_path <- here("data", "mbon", "mbon_master_taxa_extend.xlsx")
+taxa_list_path <- here(base_dir, "mbon_master_taxa_extend.xlsx")
 
 taxa_data <- 
   zoo_merged %>%
-    distinct(object_annotation_category)
+  distinct(object_annotation_category)
 
 # ---- if a previous taxa list doesnt exist, create one ---- #
 if (!file_exists(taxa_list_path)) {
@@ -525,11 +528,11 @@ zoo_abund_wide
 if (FALSE) {
   write_csv(
     zoo_abund_wide,
-    here("data", "mbon", "zoo_abund_wide.csv")
+    here(base_dir, "zoo_abund_wide.csv")
   )
   write_xlsx(
     zoo_abund_wide,
-    here("data", "mbon", "zoo_abund_wide.xlsx")
+    here(base_dir, "zoo_abund_wide.xlsx")
   )
 }
 
