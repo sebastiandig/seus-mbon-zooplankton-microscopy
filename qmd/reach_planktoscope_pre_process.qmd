@@ -1,0 +1,599 @@
+---
+title: "REACH: Load and Pre-process Planktonscope Data"
+author: "Sebastian Di Geronimo"
+date: 2026-10-15
+format: html
+editor: source
+---
+
+# 1.0 ---- Summary of Document ----
+
+
+
+# 2.0 ---- Setup ----
+
+
+## 2.1 Load Libraries
+
+```{r setup, include=FALSE}
+if (!nzchar(system.file(package = "librarian"))) 
+  install.packages("librarian")
+
+librarian::shelf(
+  quiet = TRUE,
+  librarian, conflicted, ggplot2, tibble, tidyr, readr, purrr, dplyr, stringr,
+  forcats, lubridate, glue, fs, magrittr, here,
+  
+ # additional
+  obistools, worrms, writexl
+)
+
+conflicts_prefer(
+  dplyr::filter(), 
+  dplyr::select()
+  )
+  
+base_dir <- here("data", "reach_ecotaxa")
+```
+
+This function will help select the lowest taxonomic name, that depends on the 
+level set in `const`
+
+```{r taxa-func}
+taxa_func <- function(..., incld_lvl = TRUE) {
+  dat <- c(...) # combine all names into a vector
+  taxa_name <- NA
+  # loop through all names to select the lowest name
+  for (i in seq(length(dat))) {
+    if (is.na(taxa_name)) {
+      taxa_name <- dat[i]
+    }
+  }
+  if (incld_lvl) {
+    taxa_name <- glue("{taxa_name} ({names(taxa_name)})")
+  }
+  return(taxa_name)
+}
+
+# order of taxonomic classification
+taxa_tree <- 
+  c("kingdom", "phylum", "class", "order", "family", "genus", "valid_name") %>%
+  rev()
+
+taxa_lvl <- "class" # lowest taxa level
+
+taxa_lvl <- taxa_tree[which(taxa_tree == taxa_lvl):length(taxa_tree)]
+```
+
+## 2.2 Load Metadata
+
+TODO: need to compile all REACH metadata 
+
+```{r metadata}
+# meta_data_path <- 
+#   base_dir %>%
+#   dir_ls(regexp = "meta") %>%
+#   str_subset("~", negate = TRUE) %T>% 
+#   print()
+# 
+# meta_data <- read_csv(meta_data_path, show_col_types = FALSE)
+```
+
+## 2.3 Load Validated Images
+
+```{r val-img}
+zoo_validated_path <- here(base_dir, "reach_zoo_validated.csv")
+
+if (!file_exists(zoo_validated_path)) {
+  # path to validated zoo file
+  zoo_val_path <-
+    base_dir %>%
+    dir_ls() %>%
+    str_subset("ecotaxa_export") %>%
+    str_subset("score", negate = TRUE) %>%
+    print()
+
+  # column names
+  col_names <-
+    read_tsv(zoo_val_path, n_max = 0, show_col_types = FALSE) %>%
+    names()
+
+  # read and filter
+  zoo_validated <-
+    read_tsv_chunked(
+      zoo_val_path,
+      chunk_size     = 100000,
+      show_col_types = FALSE,
+      callback       = DataFrameCallback$new(function(x, pos) {
+        message(glue("Row number: {pos} (in 100,000 row chunks)"))
+        x <- x %>%
+          filter(str_detect(object_annotation_status, "validated")) %>%
+          filter_out(str_detect(object_annotation_category, "detrit|artefact")) %>%
+          mutate(object_time_end = as.numeric(object_time_end))
+        return(x)
+      })
+    )
+
+  write_csv(zoo_validated, zoo_validated_path, na = "")
+  
+  rm(zoo_val_path, col_names)
+  
+} else {
+  message("Loading validated file.")
+  zoo_validated <- read_csv(zoo_validated_path, show_col_types = FALSE, guess_max = Inf)
+}
+
+zoo_validated
+```
+
+## 2.4 Load Predicted Images with Score > 0.5
+
+```{r pred-img}
+zoo_predict_path <- here(base_dir, "reach_zoo_predict.csv")
+
+if (!file_exists(zoo_predict_path)) {
+  # path to predicted zoo file
+  zoo_pred_path <-
+    base_dir %>%
+    dir_ls() %>%
+    str_subset("ecotaxa_export") %>%
+    str_subset("score", negate = FALSE) %>%
+    print()
+
+  # column names
+  col_names <-
+    read_tsv(zoo_pred_path, n_max = 0, show_col_types = FALSE) %>%
+    names()
+  
+  # read and filter
+  zoo_predicted <-
+    read_tsv_chunked(
+      zoo_pred_path,
+      chunk_size     = 100000,
+      show_col_types = FALSE,
+      callback       = DataFrameCallback$new(function(x, pos) {
+        message(pos)
+        x <- x %>%
+          filter_out(str_detect(object_annotation_category, "detrit|artefact")) %>%
+          mutate(object_time_end = as.numeric(object_time_end))
+        return(x)
+      })
+    )
+  
+   write_csv(zoo_predicted, zoo_predict_path, na = "")
+  
+  rm(zoo_pred_path, col_names)
+  
+} else {
+  message("Loading predict file.")
+   zoo_predicted <- read_csv(zoo_predict_path, show_col_types = FALSE, guess_max = Inf)
+}
+
+zoo_predicted
+```
+
+## 2.5 Merge Validated and Predicted Data
+
+Filter out aquisitions (10/16/2026)
+* REACH_REACH_002-S07- 1, 2
+* REACH_003_S07 -
+* REACH_003_S23 - 1, 2, 4
+* REACH_003_S17C26 - 1
+* REACH_004_S21 - 6, 5, 4
+* REACH_004_S17C26 - 8, 7, 6, 3, 4
+* REACH_005_S23 - 4
+* REACH_005_S14 - 3
+* REACH_005_S03 - 1, 2
+* REACH_005_S05 - 1
+* REACH_007_S03BB - 4, 3 
+
+
+```{r merge}
+zoo_merged <- 
+  bind_rows(
+    zoo_validated,
+    zoo_predicted
+  )
+
+zoo_merged
+```
+
+## 2.6 Taxa List
+
+```{r merge}
+taxa_list_path <- here(base_dir, "reach_master_taxa_extend.xlsx")
+
+taxa_data <- 
+  zoo_merged %>%
+  distinct(object_annotation_category)
+
+# ---- if a previous taxa list doesnt exist, create one ---- #
+if (!file_exists(taxa_list_path)) {
+  old <- FALSE
+  message("Creating master taxa list!")
+  # extract taxa list from object_annotation_category
+  taxa_list <-
+    taxa_data %>%
+    mutate(
+      search_name = object_annotation_category,
+      worrms = obistools::match_taxa(search_name)
+    ) %>%
+    unnest(worrms)
+
+  taxa_list
+
+  taxa_list %>%
+    filter(is.na(scientificName))
+
+  taxa_list_extended <-
+    taxa_list %>%
+    select(-match_type) %>%
+    mutate(
+      acceptedNameUsageID = as.numeric(acceptedNameUsageID),
+      taxa = map(
+        acceptedNameUsageID,
+        \(.x) {
+          if (is.na(.x)) {
+            return(NULL)
+          }
+          worrms::wm_record(.x)
+        }
+      )
+    ) %>%
+    unnest(taxa, keep_empty = TRUE) %>%
+    select(
+      object_annotation_category, search_name, scientificName, AphiaID, 
+      scientificname, valid_name, rank, kingdom:genus
+    ) %>% 
+    arrange(kingdom, phylum, class, order, family, genus) %>%
+    mutate(include = NA, multiplicative = NA)
+  
+  writexl::write_xlsx(
+    taxa_list_extended,
+    taxa_list_path
+  )
+  
+} else {
+  old <- TRUE
+  message("Reading previously created master taxa list.")
+  taxa_list_extended <- readxl::read_xlsx(taxa_list_path)
+}
+
+
+# ---- check if new species exist ---- #
+new_taxa <-
+  full_join(
+    taxa_list_extended,
+    taxa_data
+  ) %>%
+   mutate(
+      search_name = if_else(is.na(search_name), object_annotation_category, search_name)
+   ) %>%
+  filter(is.na(valid_name) & !str_detect(search_name, "ignore")) %>%
+  distinct(object_annotation_category, search_name)
+
+new_taxa
+
+if (nrow(new_taxa) > 0 & old) {
+  taxa_list2 <-
+    new_taxa %>%
+    mutate(
+      worrms = obistools::match_taxa(search_name)
+    ) %>%
+    unnest(worrms)
+
+  taxa_list2_extended <- 
+    taxa_list2 %>%
+    select(-match_type) %>%
+    mutate(
+      acceptedNameUsageID = as.numeric(acceptedNameUsageID),
+      taxa = map(
+        acceptedNameUsageID,
+        \(.x) {
+          if (is.na(.x)) {
+            return(NULL)
+          }
+          worrms::wm_record(.x)
+        }
+      )
+    ) %>%
+    unnest(taxa, keep_empty = TRUE) %>%
+    select(
+      object_annotation_category, search_name, scientificName, AphiaID, 
+      scientificname, valid_name, rank, kingdom:genus
+    )
+  
+  if (!any(taxa_list_extended$object_annotation_category %in% taxa_list2_extended$object_annotation_category)) {
+    taxa_list_extended <-
+      taxa_list2_extended %>%
+      filter_out(object_annotation_category %in% taxa_list_extended$object_annotation_category) %>%
+      bind_rows(
+        taxa_list_extended,
+        .,
+      ) %>%
+      arrange(kingdom, phylum, class, order, family, genus)
+  }
+  
+  taxa_list_extended <-
+    rows_patch(
+      taxa_list_extended,
+      taxa_list2_extended,
+      by = c("object_annotation_category", "search_name"),
+      unmatched = "ignore"
+    ) %>%
+    arrange(kingdom, phylum, class, order, family, genus)
+  
+  taxa_list_extended
+  
+  if (FALSE) {
+    writexl::write_xlsx(
+      taxa_list_extended,
+      taxa_list_path
+      )
+  }
+  
+}
+
+taxa_not_included <- 
+  taxa_list_extended %>%
+  filter_out(is.na(include) | str_detect(include, "(?i)y"))
+
+taxa_level <- 
+  taxa_list_extended %>%
+  mutate(
+    # select the lowest taxa name available
+    taxa_level = pmap(
+      across(all_of(c(taxa_lvl))),
+      incld_lvl = FALSE,
+      taxa_func
+    ),
+  ) %>%
+  unnest(taxa_level)
+
+select(taxa_level, 1, 2, valid_name, taxa_level)
+```
+
+# 3.0 Count Images and Volume per Sample and Acquisition
+
+```{r}
+# count images per acquisition
+zoo_sum <-
+  zoo_merged %>%
+  left_join(
+    taxa_list_extended,
+    by = "object_annotation_category"
+  ) %>%
+  filter_out(str_detect(search_name, "ignore")) %>%
+  
+  # adds rows to the number of extra cells 
+  mutate(
+    multiplicative = if_else(is.na(multiplicative), 1, multiplicative)
+  ) %>%
+  uncount(weights = multiplicative) %>%
+  
+  # select functional name to aggregate taxa names
+  mutate(func_name = object_annotation_category) %>%
+  summarise(
+    .by = c(sample_id, acq_id, object_lat, object_lon, object_date, object_time, 
+            func_name, sample_gear_net_opening, 
+            sample_concentrated_sample_volume, sample_dilution_factor, 
+            acq_imaged_volume
+            ),
+    count = n()
+  ) %>%
+  group_by(
+    sample_id, object_lat, object_lon, object_date,
+    object_time, sample_gear_net_opening, sample_concentrated_sample_volume, 
+    sample_dilution_factor,
+    ) %>%
+   complete(
+    acq_id,
+    func_name,
+    fill = list(count = 0),
+    explicit = FALSE
+  ) %>%
+  ungroup() %>%
+  fill(
+    acq_imaged_volume,
+    .by = acq_id,
+    .direction = "downup"
+  )
+
+zoo_sum
+
+# sum volume for total sample
+acq_total_vol <- 
+  zoo_sum %>%
+  distinct(sample_id, acq_id, acq_imaged_volume) %>%
+  reframe(
+    .by = sample_id, 
+    acq_imaged_volume_total = sum(acq_imaged_volume),
+    total_acq = n()
+    )
+
+acq_total_vol
+```
+
+
+
+```{r}
+pivot_wider(
+  data         = zoo_sum,
+  # id_cols      = c(), # *optional* vector of unaffected columns,
+  names_from   = c(func_name), # category column(s) to pivot wide
+  values_from  = c(count), # value column(s) that hold data for each category column
+  names_sep    = "_",
+  names_repair = janitor::make_clean_names
+  )
+```
+
+```{r}
+zoo_wide_aq <- 
+  left_join(
+    zoo_sum,
+    acq_total_vol
+  ) %>%
+  mutate(
+    .before = object_lat,
+    .by = c(sample_id, func_name),
+    count2 = row_number()
+  ) %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(sample_id, object_lat:sample_dilution_factor, func_name,
+                     acq_imaged_volume_total, total_acq), # *optional* vector of unaffected columns,
+    names_from   = c(count2), # category column(s) to pivot wide
+    values_from  = count, # value column(s) that hold data for each category column
+    names_repair = janitor::make_clean_names,
+    names_prefix = "acq_"
+  ) %>%
+  rowwise() %>%
+  mutate(
+    total_count = sum(c_across(acq_1:last_col()), na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    ind_per_sample = 
+      (total_count / acq_imaged_volume_total) * 
+      sample_concentrated_sample_volume 
+  )
+
+zoo_wide_aq
+
+# check where now sample concentrated sample volume exists
+no_conc_vol <- 
+  filter(zoo_wide_aq, is.na(sample_concentrated_sample_volume)) %>%
+  distinct(sample_id) %T>%
+  print() %>%
+  pull(sample_id) %>%
+  paste(collapse = "|")
+
+filter(zoo_wide_aq, str_detect(sample_id, no_conc_vol)) %>%
+  distinct(sample_id)
+
+# check where acquistions do not equal 3
+filter(zoo_wide_aq, total_acq != 3) %>%
+  distinct(sample_id, total_acq, acq_imaged_volume_total, object_date) %>%
+  arrange(object_date) %>%
+  distinct() %>%
+  pull(sample_id) %>%
+  cat(sep = "-\n")
+  
+```
+
+
+
+
+```{r}
+zoo_wide_aq %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(sample_id:acq_imaged_volume_total), # *optional* vector of unaffected columns,
+    names_from   = c(func_name), # category column(s) to pivot wide
+    values_from  = c(ind_per_sample), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names
+    )
+```
+
+## Extract Metadata and Align with Zooplankton Data
+
+```{r}
+meta_merge <-
+  zoo_wide_aq  %>%
+  distinct(sample_id) %>%
+  mutate(
+    sample_id2 = recode_values(
+      sample_id,
+      "REACH_REAC002S08"       ~ "REACH_002_S08",
+      "REACH_REACH_002-S07"    ~ "REACH_002_S07",
+      "REACH_REACH_002-S07"    ~ "REACH_002-S07",			
+      "REACH_REACH_002_S14"    ~ "REACH_002_S14",
+      "REACH_REACH_002_S17C26" ~ "REACH_002_S17C26",
+      default = sample_id
+    )
+  ) %>%
+  separate_wider_delim(
+    cols        = sample_id2,
+    names       = c("cruise_id", "cruise_num", "station"),
+    delim       = "_",
+    too_many    = "drop"
+  ) %>%
+  mutate(
+    .keep = "unused",
+    # .before = cruise,
+    cruise_id = glue("{cruise_id}{cruise_num}"),
+    station   = str_to_upper(station),
+    station   = str_remove(station, "BB|BA"),
+  ) %>%
+  left_join(
+    meta_data,
+    by = c(
+      "cruise_id" = "cruise_id",
+      "station"   = "locationID")
+  )
+
+meta_merge
+```
+
+## Calculate Density (Individuals per m^3)
+
+```{r density-calc}
+zoo_abund <-
+  right_join(
+    meta_merge,
+    zoo_wide_aq,
+    by = "sample_id"
+  ) %>%
+  mutate(
+    ind_m3 = ind_per_sample / volume_filt_cubic_m
+  ) %>%
+  
+  # cruise WS16074 has 3 entries in log sheet per site and the samples do not
+  # indicate which row it goes to
+  filter_out(str_detect(cruise_id, "WS16074"))
+
+zoo_abund
+
+
+```
+## Save Community in Wide Format
+
+```{r}
+zoo_abund_wide <- 
+  zoo_abund %>%
+  pivot_wider(
+    data         = .,
+    id_cols      = c(cruise_id:lon_in), # *optional* vector of unaffected columns,
+    names_from   = c(func_name), # category column(s) to pivot wide
+    values_from  = c(ind_m3), # value column(s) that hold data for each category column
+    names_sep    = "_",
+    names_repair = janitor::make_clean_names,
+    values_fill = 0
+    )
+
+zoo_abund_wide
+
+if (FALSE) {
+  write_csv(
+    zoo_abund_wide,
+    here(base_dir, "zoo_abund_wide.csv")
+  )
+  write_xlsx(
+    zoo_abund_wide,
+    here(base_dir, "zoo_abund_wide.xlsx")
+  )
+}
+
+```
+
+```{r}
+zoo_abund %>%
+  filter_out(
+    str_detect(func_name, paste(taxa_not_included$valid_name, collapse = "|")) |
+    is.na(func_name)
+  ) %>%
+  distinct(func_name) %>%
+  arrange(func_name)
+```
+
