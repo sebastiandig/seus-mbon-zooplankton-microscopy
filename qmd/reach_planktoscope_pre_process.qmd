@@ -70,13 +70,14 @@ taxa_lvl <- taxa_tree[which(taxa_tree == taxa_lvl):length(taxa_tree)]
 TODO: need to compile all REACH metadata 
 
 ```{r metadata}
-# meta_data_path <- 
-#   base_dir %>%
-#   dir_ls(regexp = "meta") %>%
-#   str_subset("~", negate = TRUE) %T>% 
-#   print()
-# 
-# meta_data <- read_csv(meta_data_path, show_col_types = FALSE)
+meta_data_path <-
+  base_dir %>%
+  dir_ls(regexp = "reach_meta") %>%
+  str_subset("~", negate = TRUE) %T>%
+  print()
+
+meta_data <- read_csv(meta_data_path, show_col_types = FALSE)
+meta_data
 ```
 
 ## 2.3 Load Validated Images
@@ -108,7 +109,7 @@ if (!file_exists(zoo_validated_path)) {
         message(glue("Row number: {pos} (in 100,000 row chunks)"))
         x <- x %>%
           filter(str_detect(object_annotation_status, "validated")) %>%
-          filter_out(str_detect(object_annotation_category, "detrit|artefact")) %>%
+          # filter_out(str_detect(object_annotation_category, "detrit|artefact")) %>%
           mutate(object_time_end = as.numeric(object_time_end))
         return(x)
       })
@@ -124,6 +125,7 @@ if (!file_exists(zoo_validated_path)) {
 }
 
 zoo_validated
+distinct(zoo_validated, object_annotation_category)
 ```
 
 ## 2.4 Load Predicted Images with Score > 0.5
@@ -174,7 +176,7 @@ zoo_predicted
 
 ## 2.5 Merge Validated and Predicted Data
 
-Filter out aquisitions (10/16/2026)
+Filter bad out acquisitions (10/16/2026)
 * REACH_REACH_002-S07- 1, 2
 * REACH_003_S07 -
 * REACH_003_S23 - 1, 2, 4
@@ -189,13 +191,37 @@ Filter out aquisitions (10/16/2026)
 
 
 ```{r merge}
-zoo_merged <- 
+zoo_merged <-
   bind_rows(
     zoo_validated,
     zoo_predicted
+  ) %>%
+  # filter(str_detect(sample_id, "002")) %>%
+  # distinct(sample_id, acq_id) %>%
+  
+  # filter out bad acquisitions in data
+  filter_out(
+    str_detect(
+      acq_id,
+      paste(
+        sep = "|",
+        paste("REACH_REACH_002-S07", c(1, 2), sep = "_", collapse = "|"),
+        paste("REACH_003_S23", c(1, 2, 4), sep = "_", collapse = "|"),
+        paste("REACH_003_S17C26", c(1), sep = "_", collapse = "|"),
+        paste("REACH_004_S21", c(6, 5, 4), sep = "_", collapse = "|"),
+        paste("REACH_004_S17C26", c(8, 7, 6, 3, 4), sep = "_", collapse = "|"),
+        paste("REACH_005_S23", c(4), sep = "_", collapse = "|"),
+        paste("REACH_005_S14", c(3), sep = "_", collapse = "|"),
+        paste("REACH_005_S03", c(1, 2), sep = "_", collapse = "|"),
+        paste("REACH_005_S05", c(1), sep = "_", collapse = "|"),
+        paste("REACH_007_S03BB", c(4, 3), sep = "_", collapse = "|")
+      )
+    )
   )
 
 zoo_merged
+
+distinct(zoo_merged, acq_id)
 ```
 
 ## 2.6 Taxa List
@@ -460,7 +486,7 @@ zoo_wide_aq <-
 
 zoo_wide_aq
 
-# check where now sample concentrated sample volume exists
+# check where no sample concentrated sample volume exists
 no_conc_vol <- 
   filter(zoo_wide_aq, is.na(sample_concentrated_sample_volume)) %>%
   distinct(sample_id) %T>%
@@ -471,7 +497,7 @@ no_conc_vol <-
 filter(zoo_wide_aq, str_detect(sample_id, no_conc_vol)) %>%
   distinct(sample_id)
 
-# check where acquistions do not equal 3
+# check where acquisitions do not equal 3
 filter(zoo_wide_aq, total_acq != 3) %>%
   distinct(sample_id, total_acq, acq_imaged_volume_total, object_date) %>%
   arrange(object_date) %>%
@@ -503,6 +529,8 @@ meta_merge <-
   zoo_wide_aq  %>%
   distinct(sample_id) %>%
   mutate(
+    
+    # fix different sample ID names
     sample_id2 = recode_values(
       sample_id,
       "REACH_REAC002S08"       ~ "REACH_002_S08",
@@ -510,6 +538,7 @@ meta_merge <-
       "REACH_REACH_002-S07"    ~ "REACH_002-S07",			
       "REACH_REACH_002_S14"    ~ "REACH_002_S14",
       "REACH_REACH_002_S17C26" ~ "REACH_002_S17C26",
+      "REACH_003_S10" ~ "REACH_003_S10C25",
       default = sample_id
     )
   ) %>%
@@ -520,20 +549,33 @@ meta_merge <-
     too_many    = "drop"
   ) %>%
   mutate(
-    .keep = "unused",
-    # .before = cruise,
     cruise_id = glue("{cruise_id}{cruise_num}"),
     station   = str_to_upper(station),
     station   = str_remove(station, "BB|BA"),
+    bongo = recode_values(
+      sample_id,
+      "REACH_004_S17C26"       ~ "BA",
+      "REACH_004_S21"          ~ "BA",
+      "REACH_REAC002S08"       ~ "BA",
+      "REACH_REACH_002-S07"    ~ "BA",
+      "REACH_REACH_002_S14"    ~ "BA",
+      "REACH_REACH_002_S17C26" ~ "BA",
+      "REACH_002_S10C25"       ~ "BA",
+      default = "BB"
+    )
   ) %>%
   left_join(
-    meta_data,
+    mutate(meta_data, location_id2 = str_remove(location_id, "/")),
     by = c(
       "cruise_id" = "cruise_id",
-      "station"   = "locationID")
+      "station"   = "location_id2",
+      "bongo" = "net_type")
   )
 
 meta_merge
+
+meta_merge %>%
+  filter(is.na(mesh_size_um))
 ```
 
 ## Calculate Density (Individuals per m^3)
@@ -546,15 +588,27 @@ zoo_abund <-
     by = "sample_id"
   ) %>%
   mutate(
-    ind_m3 = ind_per_sample / volume_filt_cubic_m
-  ) %>%
-  
-  # cruise WS16074 has 3 entries in log sheet per site and the samples do not
-  # indicate which row it goes to
-  filter_out(str_detect(cruise_id, "WS16074"))
+    vol_filt_flow2 = if_else(is.na(flag),  vol_filt_flow, NA),
+    ind_per_sample = ind_per_sample * (1 / ethanol_split),
+    ind_m3 = ind_per_sample / vol_filt_flow2,
+    ind_m3_2 = round(ind_m3, 2)
+  )
 
 zoo_abund
 
+ right_join(
+    meta_merge,
+    zoo_wide_aq,
+    by = "sample_id"
+  ) %>%
+  distinct(pick(1, 2), station, bongo, pick(contains("_split"))) %>%
+  filter(is.na(ethanol_split))
+
+zoo_abund %>%
+  select(
+    1:6, func_name, ind_m3_2
+  ) %>%
+  arrange(desc(ind_m3_2))
 
 ```
 ## Save Community in Wide Format
@@ -564,7 +618,7 @@ zoo_abund_wide <-
   zoo_abund %>%
   pivot_wider(
     data         = .,
-    id_cols      = c(cruise_id:lon_in), # *optional* vector of unaffected columns,
+    id_cols      = c(sample_id:depth, ethanol_split), # *optional* vector of unaffected columns,
     names_from   = c(func_name), # category column(s) to pivot wide
     values_from  = c(ind_m3), # value column(s) that hold data for each category column
     names_sep    = "_",
@@ -577,7 +631,8 @@ zoo_abund_wide
 if (FALSE) {
   write_csv(
     zoo_abund_wide,
-    here(base_dir, "zoo_abund_wide.csv")
+    here(base_dir, "zoo_abund_wide.csv"),
+    na = ""
   )
   write_xlsx(
     zoo_abund_wide,
@@ -595,5 +650,113 @@ zoo_abund %>%
   ) %>%
   distinct(func_name) %>%
   arrange(func_name)
+```
+
+
+
+```{r}
+zoo_abund_merge <- 
+  zoo_abund %>%
+  filter_out(
+    str_detect(func_name, paste(taxa_not_included$valid_name, collapse = "|")) |
+    is.na(func_name)
+  ) %>%
+  # filter(
+  #   str_detect(func_name, "Tretomphalus")
+  #   
+  # ) %>%
+  
+  left_join(
+    select(taxa_level, object_annotation_category, valid_name, taxa_level, include),
+    by = c("func_name" = "object_annotation_category")
+  ) %>%
+  filter_out(str_detect(include, "n")) %>%
+  
+  mutate(
+    .after     = event_date,
+    year       = year(event_date), 
+    date_month = ym(format(event_date, "%Y-%m")),
+    site = station,
+    # taxa_level = func_name
+    ) %>%
+  
+  # forces the month to be the same month as the start of the cruise
+  # - only occurs if a cruise overlaps 2 different months (i.e. April into May)
+  mutate(
+    .by = cruise_id,
+    date_month = min(date_month, na.rm = TRUE)
+  ) %>%
+  summarise(
+    .by = c(cruise_id, site, year, date_month, taxa_level),
+    ind_m3 = sum(ind_m3),
+    num_spc_summed = n()
+  ) %>%
+  mutate(
+    .by     = c(site, date_month),
+    total   = sum(ind_m3),
+    percent = ind_m3 / total,
+    # site    = fct(site, c("MR", "LK", "WS"))
+  ) %>%
+  mutate(
+    taxa_level  = fct_reorder(taxa_level, percent, .fun = max),
+    date_month2 = fct_reorder(format(date_month, "%b %Y"), date_month)
+  )
+
+zoo_abund_merge
+
+distinct(zoo_abund_merge, taxa_level)
+```
+
+```{r}
+plt_reach_abs_ecotaxa <-
+  zoo_abund_merge %>%
+  ggplot(
+    aes(x = date_month2, y = ind_m3, fill = taxa_level, 
+        color = after_scale(prismatic::clr_darken(fill, 0.3))
+        )
+         ) +
+  geom_col() +
+  geom_hline(yintercept = -0.005, linewidth = rel(0.75)) +
+  labs(
+    y = expression(paste("# Individual m")^-3),
+    x = "Year",
+    fill  = "Taxa Name",
+    title = glue("Taxonomic Level: {taxa_lvl[1]}")
+  ) +
+  scale_y_continuous(
+    expand = expansion(c(NA, 0.05)),
+    sec.axis = sec_axis(transform = ~ .x, labels = NULL)
+  ) +
+  scale_fill_viridis_d(option = "A") +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  theme_classic() +
+  # facet_grid(~site) +
+  facet_wrap(~site, ncol = 3, strip.position = "top", scales = "free_y") +
+  theme(
+    legend.box.background = element_rect(color = "grey"),
+    legend.text = element_text(size = rel(0.8)),
+    legend.title = element_text(size = rel(0.8)),
+    legend.key.size = unit(rel(0.5), "cm"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.ticks.y.right = element_blank()
+  )
+
+
+plt_reach_abs_ecotaxa
+
+if (T) {
+  pdf(
+    # here("data", "reach_ecotaxa", glue("ecotaxa_{score_lvl}_abs_{taxa_lvl[1]}.pdf")),
+    here("data", "reach_ecotaxa", glue("ecotaxa_abs_{taxa_lvl[1]}.pdf")),
+    # height = 7,
+    # width = 12,
+    # res = 300,
+    # units = "in"
+  )
+
+  print(plt_reach_abs_ecotaxa)
+
+  dev.off()
+}
 ```
 
